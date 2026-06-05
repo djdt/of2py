@@ -102,6 +102,60 @@ def label_peaks(ax, xs: np.ndarray, ys: np.ndarray, peaks: np.ndarray):
         )
 
 
+def init_parser(parser: argparse.ArgumentParser):
+    parser.set_defaults(func=main)
+    parser.add_argument("files", type=Path, nargs="+", help="CSV output(s) from of2py")
+    parser.add_argument(
+        "--cluster",
+        metavar="NAME",
+        type=str,
+        help="only show spectra with this cluster",
+    )
+
+    parser.add_argument(
+        "--frames",
+        metavar="COUNT",
+        default=20,
+        type=int,
+        help="minimum number of frames",
+    )
+    parser.add_argument(
+        "--normalise", action="store_true", help="normalise all spectra"
+    )
+    parser.add_argument(
+        "--smooth",
+        type=float,
+        const=3.0,
+        metavar="SIGMA",
+        nargs="?",
+        help="smooth spectra with Gaussian",
+    )
+    parser.add_argument(
+        "--single", action="store_true", help="only output the spectra with most frames"
+    )
+    parser.add_argument("--sum", action="store_true", help="sum all spectra")
+    parser.add_argument(
+        "--mean", action="store_true", help="show a single mean spectra with stddev"
+    )
+    parser.add_argument(
+        "--stack", action="store_true", help="stack plots instead of overlaying"
+    )
+    # parser.add_argument(
+    #     "--remove-background",
+    #     action="store_true",
+    #     help="remove background and fluorescence",
+    # )
+    parser.add_argument(
+        "--legend", action="store_true", help="show a legend for each plot"
+    )
+    parser.add_argument(
+        "--label",
+        type=float,
+        nargs="+",
+        help="add labels to peaks at these shifts",
+    )
+
+
 def main(args: argparse.Namespace):
     for file in args.files:
         assert isinstance(file, Path)
@@ -118,7 +172,9 @@ def main(args: argparse.Namespace):
 
         if args.cluster is not None:
             if file_type == "of2py":
-                logging.warning("filtering by cluster not availble for 'of2py' files")
+                logging.warning(
+                    "filtering by cluster not availble for 'of2py track' files"
+                )
             else:
                 x = x[x["cluster"] == args.cluster]
 
@@ -164,5 +220,6 @@ def main(args: argparse.Namespace):
 
     if args.legend:
         plt.legend()
+
     plt.tight_layout()
     plt.show()

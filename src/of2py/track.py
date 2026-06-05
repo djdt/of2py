@@ -1,3 +1,4 @@
+from pathlib import Path
 import numpy as np
 import scipy.ndimage as ndi
 import argparse
@@ -54,6 +55,49 @@ def read_spectra(image: np.ndarray, pos: np.ndarray, width: int = 3) -> np.ndarr
     spectra = np.roll(spectra, shift, axis=0)
     spectra[:shift] = 0.0
     return spectra[::-1]
+
+
+def init_parser(parser: argparse.ArgumentParser):
+    parser.set_defaults(func=main)
+    parser.add_argument("video", type=Path, help="path to the .tiff video file")
+    parser.add_argument("--show", action="store_true")
+    parser.add_argument(
+        "--record", type=Path, help="save a video of the output of --show"
+    )
+    parser.add_argument("--output", type=Path, help="save tracked particles to path")
+    parser.add_argument(
+        "--spectra",
+        type=Path,
+        help="extract ramen spectra to numpy array",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=1e3,
+        help="minimum value to detect a particle",
+    )
+    parser.add_argument(
+        "--smooth",
+        type=float,
+        metavar="SIGMA",
+        nargs="?",
+        const=1.0,
+        help="smooth video with Gaussian before processing",
+    )
+    parser.add_argument(
+        "--distance",
+        type=float,
+        default=20.0,
+        metavar="PIXELS",
+        help="minimum distance between particles / maximum distance to track",
+    )
+    parser.add_argument(
+        "--spectra-width",
+        type=int,
+        default=3,
+        metavar="PIXELS",
+        help="width of spectra to extract",
+    )
 
 
 def main(args: argparse.Namespace):
