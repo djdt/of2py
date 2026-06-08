@@ -47,7 +47,9 @@ def read_raman_spectra_file(path: Path) -> tuple[np.ndarray, np.ndarray]:
         )
 
 
-def read_raman_single_spectra_file(path: Path) -> tuple[np.ndarray, np.ndarray]:
+def read_raman_single_spectra_file(
+    path: Path, backgrounds: bool = False
+) -> tuple[np.ndarray, np.ndarray]:
     dtype = [
         ("id", int),
         ("frame", int),
@@ -68,6 +70,7 @@ def read_raman_single_spectra_file(path: Path) -> tuple[np.ndarray, np.ndarray]:
 
         x = np.loadtxt(fp, delimiter=";", dtype=dtype)
 
+    y = x[x["type"] == "B"]
     x = x[x["type"] == "S"]  # remove backgrounds
     ids, counts = np.unique(x["id"], return_counts=True)
 
@@ -85,7 +88,10 @@ def read_raman_single_spectra_file(path: Path) -> tuple[np.ndarray, np.ndarray]:
         reduced[i]["frames"] = count
         reduced[i]["cluster"] = x[x["id"] == id][-1]["cluster"]
         reduced[i]["confidence"] = x[x["id"] == id][-1]["confidence"]
-        reduced[i]["spectra"] = np.mean(x[x["id"] == id]["spectra"], axis=0)
+        if backgrounds:
+            reduced[i]["spectra"] = np.mean(y[y["id"] == id]["spectra"], axis=0)
+        else:
+            reduced[i]["spectra"] = np.mean(x[x["id"] == id]["spectra"], axis=0)
 
     return shifts, reduced
 
