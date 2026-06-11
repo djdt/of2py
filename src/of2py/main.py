@@ -1,8 +1,6 @@
 import argparse
 
-import track
-import spectra
-import particle
+from of2py import track, spectra, particle
 
 
 def main():
@@ -10,6 +8,7 @@ def main():
         "of2py",
         description="a set of tools for processing raw data from the BRAVE OF2i and OF2i-Raman setups",
     )
+    parser.set_defaults(func=None)
     subparsers = parser.add_subparsers(description="of2py processing subcommands")
     parser_track = subparsers.add_parser(
         "track",
@@ -30,6 +29,8 @@ def main():
     particle.init_parser(parser_particle)
 
     args = parser.parse_args()
+    if args.func is None:
+        parser.error("subcommand required")
     args.func(args)
 
 
