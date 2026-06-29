@@ -48,8 +48,24 @@ def read_raman_spectra_file(path: Path) -> tuple[np.ndarray, np.ndarray]:
 
 
 def read_raman_single_spectra_file(
-    path: Path, backgrounds: bool = False
+    path: Path,
+    mode: str = "subtracted",
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Read a Raman single spectra file.
+
+    Data can be returned with or without background subtraction depending on `mode`.
+    Passing 'raw' returns un-corrected spectra, 'subtracted' returns background subtracted spectra
+    and 'background' return the background spectra for each particle.
+
+    Args:
+        path: path to csv file
+        mode: one of 'raw', 'subtracted', 'background'
+
+    Returns:
+        array of shifts (/cm), array of spectra
+    """
+    if mode not in ["raw", "subtracted", "background"]:
+        raise ValueError("mode must be one of 'raw', 'subtracted', 'background'")
     dtype = [
         ("id", int),
         ("frame", int),
@@ -71,7 +87,7 @@ def read_raman_single_spectra_file(
         x = np.loadtxt(fp, delimiter=";", dtype=dtype)
 
     y = x[x["type"] == "B"]
-    x = x[x["type"] == "S"]  # remove backgrounds
+    x = x[x["type"] == "S"]  # removed backgrounds
     ids, counts = np.unique(x["id"], return_counts=True)
 
     reduced_dtype = [
@@ -88,10 +104,14 @@ def read_raman_single_spectra_file(
         reduced[i]["frames"] = count
         reduced[i]["cluster"] = x[x["id"] == id][-1]["cluster"]
         reduced[i]["confidence"] = x[x["id"] == id][-1]["confidence"]
-        if backgrounds:
-            reduced[i]["spectra"] = np.mean(y[y["id"] == id]["spectra"], axis=0)
-        else:
+        if mode == "raw":
+            reduced[i]["spectra"] = np.mean(
+                x[x["id"] == id]["spectra"] + y[y["id"] == id]["spectra"], axis=0
+            )
+        elif mode == "subtracted":
             reduced[i]["spectra"] = np.mean(x[x["id"] == id]["spectra"], axis=0)
+        else:  # mode == "background"
+            reduced[i]["spectra"] = np.mean(y[y["id"] == id]["spectra"], axis=0)
 
     return shifts, reduced
 
