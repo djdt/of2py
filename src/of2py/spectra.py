@@ -20,7 +20,16 @@ def read_of2py_file(file: str | Path) -> tuple[np.ndarray, np.ndarray]:
     return shifts, x
 
 
-def read_raman_spectra_file(path: Path) -> tuple[np.ndarray, np.ndarray]:
+def read_raman_spectra(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Read a Raman spectra file.
+
+    Args:
+        path: path to csv file
+
+    Returns:
+        array of shifts (/cm), structured array of spectra
+    """
+
     def brave_timestamp(x: str) -> np.datetime64:
         return np.datetime64(x[:-4]) + np.timedelta64(int(x[-3:]), "ms")
 
@@ -47,10 +56,10 @@ def read_raman_spectra_file(path: Path) -> tuple[np.ndarray, np.ndarray]:
         )
 
 
-def read_raman_single_spectra_file(
+def read_raman_single_spectra(
     path: Path,
     mode: str = "subtracted",
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Read a Raman single spectra file.
 
     Data can be returned with or without background subtraction depending on `mode`.
@@ -62,7 +71,7 @@ def read_raman_single_spectra_file(
         mode: one of 'raw', 'subtracted', 'background'
 
     Returns:
-        array of shifts (/cm), array of reduced spectra, original (single) spectra
+        array of shifts (/cm), structured array of single spectra
     """
     if mode not in ["raw", "subtracted", "background"]:
         raise ValueError("mode must be one of 'raw', 'subtracted', 'background'")
@@ -86,17 +95,8 @@ def read_raman_single_spectra_file(
 
         data = np.loadtxt(fp, delimiter=";", dtype=dtype)
 
-    y = data[data["type"] == "B"]
-    x = data[data["type"] == "S"]  # remove backgrounds
-    ids, counts = np.unique(x["id"], return_counts=True)
-
-    reduced_dtype = [
-        ("id", int),
-        ("frames", int),
-        ("cluster", "U16"),
-        ("confidence", float),
-        ("spectra", float, 2304),
-    ]
+    y = data[data["type"] == "B"]  # backgrounds
+    x = data[data["type"] == "S"]  # subtracted
 
     if mode == "raw":
         spectra = x["spectra"] + y["spectra"]
@@ -107,15 +107,37 @@ def read_raman_single_spectra_file(
 
     x["spectra"] = spectra
 
+    for id in np.unique(x["id"]):
+        x[x["id"] == id]["cluster"] = x[x["id"] == id][-1]["cluster"]
+        x[x["id"] == id]["confidence"] = x[x["id"] == id][-1]["confidence"]
+
+    return shifts, x
+
+
+def reduce_raman_single_spectra(x: np.ndarray) -> np.ndarray:
+    """Reduce a single spectra file.
+
+    Convert data read with `read_raman_single_spectra` to a format matching `read_raman_spectra`.
+    Sums spectra with the same ID and adds the number of recorded frames.
+
+    """
+    ids, counts = np.unique(x["id"], return_counts=True)
+    reduced_dtype = [
+        ("id", int),
+        ("frames", int),
+        ("cluster", "U16"),
+        ("confidence", float),
+        ("spectra", float, 2304),
+    ]
     reduced = np.empty(len(ids), dtype=reduced_dtype)
     for i, (id, count) in enumerate(zip(ids, counts)):
         reduced[i]["id"] = id
         reduced[i]["frames"] = count
         reduced[i]["cluster"] = x[x["id"] == id][-1]["cluster"]
         reduced[i]["confidence"] = x[x["id"] == id][-1]["confidence"]
-        reduced[i]["spectra"] = np.mean(x[x["id"] == id]["spectra"], axis=0)
+        reduced[i]["spectra"] = np.sum(x[x["id"] == id]["spectra"], axis=0)
 
-    return shifts, reduced, x
+    return reduced
 
 
 def label_peaks(ax, xs: np.ndarray, ys: np.ndarray, peaks: np.ndarray):
@@ -153,8 +175,13 @@ def init_parser(parser: argparse.ArgumentParser):
         type=int,
         help="minimum number of frames",
     )
+    parser.add_argument("--id", type=int, help="only show particles with this ID")
     parser.add_argument(
-        "--id", type=int, help="only show this ID, will show single spectra if possible"
+        "--pos",
+        type=float,
+        nargs=2,
+        metavar=("X0", "X1"),
+        help="only show particles with an x pos in this range, requires single spectra",
     )
     # preprocessing
     parser.add_argument(
@@ -199,20 +226,18 @@ def main(args: argparse.Namespace):
         header = file.open("r").readline()
         if "singleSpectraCount" in header:  # is raman_spectra format
             file_type = "brave"
-            shifts, data = read_raman_spectra_file(file)
+            shifts, data = read_raman_spectra(file)
         elif "materialId" in header:  # still BRAVE format
             file_type = "brave_single"
-            shifts, data, single = read_raman_single_spectra_file(file, mode=args.mode)
+            shifts, data = read_raman_single_spectra(file, mode=args.mode)
         else:  # assume of2py
             file_type = "of2py"
             shifts, data = read_of2py_file(file)
 
-        if args.single:
-            if file_type != "brave_single":
-                raise TypeError(
-                    "--single can only be used with a BRAVE single_spectra.csv file"
-                )
-            data = single
+        if args.single and file_type != "brave_single":
+            raise TypeError(
+                "--single can only be used with a BRAVE single_spectra.csv file"
+            )
 
         if args.id is not None:
             data = data[data["id"] == args.id]
@@ -225,6 +250,17 @@ def main(args: argparse.Namespace):
             else:
                 data = data[data["cluster"] == args.cluster]
 
+        if args.pos is not None:
+            if file_type != "brave_single":
+                raise TypeError("--pos requires a BRAVE single_spectra.csv file")
+            data = data[
+                np.logical_and(data["pos"] > args.pos[0], data["pos"] < args.pos[1])
+            ]
+
+        if not args.single:
+            data = reduce_raman_single_spectra(data)
+
+        # must be accessed after reduction
         if args.frames is not None:
             data = data[data["frames"] > args.frames]
 
