@@ -50,7 +50,7 @@ def read_raman_spectra_file(path: Path) -> tuple[np.ndarray, np.ndarray]:
 def read_raman_single_spectra_file(
     path: Path,
     mode: str = "subtracted",
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Read a Raman single spectra file.
 
     Data can be returned with or without background subtraction depending on `mode`.
@@ -62,7 +62,7 @@ def read_raman_single_spectra_file(
         mode: one of 'raw', 'subtracted', 'background'
 
     Returns:
-        array of shifts (/cm), array of spectra
+        array of shifts (/cm), array of reduced spectra, original (single) spectra
     """
     if mode not in ["raw", "subtracted", "background"]:
         raise ValueError("mode must be one of 'raw', 'subtracted', 'background'")
@@ -84,10 +84,10 @@ def read_raman_single_spectra_file(
             [float(s[s.find("[") + 1 : s.rfind("]")]) for s in shift_header]
         )
 
-        x = np.loadtxt(fp, delimiter=";", dtype=dtype)
+        data = np.loadtxt(fp, delimiter=";", dtype=dtype)
 
-    y = x[x["type"] == "B"]
-    x = x[x["type"] == "S"]  # removed backgrounds
+    y = data[data["type"] == "B"]
+    x = data[data["type"] == "S"]  # remove backgrounds
     ids, counts = np.unique(x["id"], return_counts=True)
 
     reduced_dtype = [
@@ -98,22 +98,24 @@ def read_raman_single_spectra_file(
         ("spectra", float, 2304),
     ]
 
+    if mode == "raw":
+        spectra = x["spectra"] + y["spectra"]
+    elif mode == "subtracted":
+        spectra = x["spectra"]
+    else:  # mode == "background"
+        spectra = y["spectra"]
+
+    x["spectra"] = spectra
+
     reduced = np.empty(len(ids), dtype=reduced_dtype)
     for i, (id, count) in enumerate(zip(ids, counts)):
         reduced[i]["id"] = id
         reduced[i]["frames"] = count
         reduced[i]["cluster"] = x[x["id"] == id][-1]["cluster"]
         reduced[i]["confidence"] = x[x["id"] == id][-1]["confidence"]
-        if mode == "raw":
-            reduced[i]["spectra"] = np.mean(
-                x[x["id"] == id]["spectra"] + y[y["id"] == id]["spectra"], axis=0
-            )
-        elif mode == "subtracted":
-            reduced[i]["spectra"] = np.mean(x[x["id"] == id]["spectra"], axis=0)
-        else:  # mode == "background"
-            reduced[i]["spectra"] = np.mean(y[y["id"] == id]["spectra"], axis=0)
+        reduced[i]["spectra"] = np.mean(x[x["id"] == id]["spectra"], axis=0)
 
-    return shifts, reduced
+    return shifts, reduced, x
 
 
 def label_peaks(ax, xs: np.ndarray, ys: np.ndarray, peaks: np.ndarray):
@@ -131,20 +133,30 @@ def label_peaks(ax, xs: np.ndarray, ys: np.ndarray, peaks: np.ndarray):
 def init_parser(parser: argparse.ArgumentParser):
     parser.set_defaults(func=main)
     parser.add_argument("files", type=Path, nargs="+", help="CSV output(s) from of2py")
+    # input
+    parser.add_argument(
+        "--mode",
+        default="subtracted",
+        choices=("raw", "subtracted", "background"),
+        help="type of spectra to load from a single_spectra.csv",
+    )
+    # filtering
     parser.add_argument(
         "--cluster",
         metavar="NAME",
         type=str,
         help="only show spectra with this cluster",
     )
-
     parser.add_argument(
         "--frames",
         metavar="COUNT",
-        default=20,
         type=int,
         help="minimum number of frames",
     )
+    parser.add_argument(
+        "--id", type=int, help="only show this ID, will show single spectra if possible"
+    )
+    # preprocessing
     parser.add_argument(
         "--normalise", action="store_true", help="normalise all spectra"
     )
@@ -156,21 +168,20 @@ def init_parser(parser: argparse.ArgumentParser):
         nargs="?",
         help="smooth spectra with Gaussian",
     )
-    parser.add_argument(
-        "--single", action="store_true", help="only output the spectra with most frames"
-    )
+    # arithmetic
     parser.add_argument("--sum", action="store_true", help="sum all spectra")
     parser.add_argument(
         "--mean", action="store_true", help="show a single mean spectra with stddev"
     )
+    # display
     parser.add_argument(
         "--stack", action="store_true", help="stack plots instead of overlaying"
     )
-    # parser.add_argument(
-    #     "--remove-background",
-    #     action="store_true",
-    #     help="remove background and fluorescence",
-    # )
+    parser.add_argument(
+        "--single",
+        action="store_true",
+        help="show single spectra, not reduced if possible",
+    )
     parser.add_argument(
         "--legend", action="store_true", help="show a legend for each plot"
     )
@@ -188,13 +199,23 @@ def main(args: argparse.Namespace):
         header = file.open("r").readline()
         if "singleSpectraCount" in header:  # is raman_spectra format
             file_type = "brave"
-            shifts, x = read_raman_spectra_file(file)
+            shifts, data = read_raman_spectra_file(file)
         elif "materialId" in header:  # still BRAVE format
             file_type = "brave_single"
-            shifts, x = read_raman_single_spectra_file(file)
+            shifts, data, single = read_raman_single_spectra_file(file, mode=args.mode)
         else:  # assume of2py
             file_type = "of2py"
-            shifts, x = read_of2py_file(file)
+            shifts, data = read_of2py_file(file)
+
+        if args.single:
+            if file_type != "brave_single":
+                raise TypeError(
+                    "--single can only be used with a BRAVE single_spectra.csv file"
+                )
+            data = single
+
+        if args.id is not None:
+            data = data[data["id"] == args.id]
 
         if args.cluster is not None:
             if file_type == "of2py":
@@ -202,23 +223,23 @@ def main(args: argparse.Namespace):
                     "filtering by cluster not availble for 'of2py track' files"
                 )
             else:
-                x = x[x["cluster"] == args.cluster]
+                data = data[data["cluster"] == args.cluster]
 
         if args.frames is not None:
-            x = x[x["frames"] > args.frames]
+            data = data[data["frames"] > args.frames]
 
-        if x.size == 0:
+        if data.size == 0:
             logging.warning(f"all spectra filtered for {file}")
             continue
 
         stddev = None
         if args.sum:
-            spectra = np.sum(x["spectra"], axis=0)
+            spectra = np.sum(data["spectra"], axis=0)
         elif args.mean:
-            spectra = np.mean(x["spectra"], axis=0)
-            stddev = np.std(x["spectra"], mean=spectra, axis=0)
+            spectra = np.mean(data["spectra"], axis=0)
+            stddev = np.std(data["spectra"], mean=spectra, axis=0)
         else:
-            spectra = x["spectra"]
+            spectra = data["spectra"]
 
         spectra = np.atleast_2d(spectra)
 
