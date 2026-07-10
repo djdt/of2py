@@ -4,7 +4,7 @@ import argparse
 import numpy as np
 
 
-def load_of2i_sizes(path: str):
+def read_raw_particle_list(path: Path | str):
     x = np.loadtxt(
         path,
         delimiter=";",
@@ -21,7 +21,7 @@ def load_of2i_sizes(path: str):
     )
 
     filter = np.logical_and(x["small"] != "S", x["large"] != "L")
-    return x["size"][filter]
+    return x[filter]
 
 
 def init_parser(parser: argparse.ArgumentParser):
@@ -45,8 +45,8 @@ def main(args: argparse.Namespace):
 
     for file in args.files:
         assert isinstance(file, Path)
-        x = load_of2i_sizes(file)
-        data.append(x)
+        x = read_raw_particle_list(file)
+        data.append(x["size"])
         labels.append(f"{file.stem}")
 
     max = np.percentile(np.concatenate(data), 95)
