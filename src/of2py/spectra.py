@@ -1,7 +1,10 @@
-from scipy.ndimage import gaussian_filter1d
+from scipy.interpolate import make_smoothing_spline, CubicSpline
+from scipy.optimize import curve_fit
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
+
+from scipy.ndimage import gaussian_filter1d
 
 import argparse
 
@@ -127,6 +130,7 @@ def reduce_raman_single_spectra(x: np.ndarray) -> np.ndarray:
         ("frames", int),
         ("cluster", "U16"),
         ("confidence", float),
+        ("velocity", float),
         ("spectra", float, 2304),
     ]
     reduced = np.empty(len(ids), dtype=reduced_dtype)
@@ -135,6 +139,9 @@ def reduce_raman_single_spectra(x: np.ndarray) -> np.ndarray:
         reduced[i]["frames"] = count
         reduced[i]["cluster"] = x[x["id"] == id][-1]["cluster"]
         reduced[i]["confidence"] = x[x["id"] == id][-1]["confidence"]
+        reduced[i]["velocity"] = velocity_from_positions(
+            x[x["id"] == id]["pos"], x[x["id"] == id]["frame"]
+        )
         reduced[i]["spectra"] = np.sum(x[x["id"] == id]["spectra"], axis=0)
 
     return reduced
@@ -150,6 +157,107 @@ def label_peaks(ax, xs: np.ndarray, ys: np.ndarray, peaks: np.ndarray):
             va="baseline",
             ha="center",
         )
+
+
+def velocity_from_positions(
+    positions: np.ndarray, frames: np.ndarray, fps: float = 20.0
+) -> float:
+    # def four_paramter_logistic(
+    #     x: np.ndarray, a: float, b: float, c: float, d: float
+    # ) -> np.ndarray:
+    #     return d + (a - d) / (1.0 + (x / c) ** b)
+    #
+    # def boltzmann(
+    #     x: np.ndarray, ymin: float, ymax: float, x0: float, dx: float
+    # ) -> np.ndarray:
+    #     return ymin + (ymax - ymin) / (1.0 + np.exp((x0 - x) / dx))
+    #
+    # def zspline(x: np.ndarray,  ymin: float, ymax: float, a: float, b: float):
+    #     xscale = (x - a) / (b- a)
+    #     z = np.
+
+    # velocity = np.diff(positions)
+    # median_velocity = np.percentile(velocity, 75)
+    #
+    # positions = positions - times * median_velocity
+    #
+    # times = (times - times[0]) / (times[-1] - times[0])
+    # # positions = (positions - positions[0]) / (positions[-1] - positions[0])
+    # times_range = np.arange(times[0], times[-1])
+    # plt.scatter(times, positions)
+    # positions = gaussian_filter1d(np.interp(times_range, times, positions), 1.0)
+    # plt.plot(times_range, positions)
+    #
+    # x = np.log(1.0 / positions - 1.0)
+    #
+    # poly = np.polynomial.Polynomial.fit(times, x, 2)
+    #
+    # if len(positions) > 4:
+    times = frames * fps
+    velocity = np.abs(np.diff(positions) / np.diff(times))  # pixels / frame
+    if velocity.size == 0:
+        return 0.0
+
+    idx = np.argmax(velocity) + 1
+    plt.scatter(times, positions)
+    times = times[idx - 3 : idx + 3]
+    positions = positions[idx - 3 : idx + 3]
+    if len(times) < 5:
+        return 1.0
+    spline = CubicSpline(times, positions)
+    smooth_times = np.arange(times[0], times[-1], 0.1)
+    plt.scatter(times, positions)
+    plt.plot(smooth_times, spline(smooth_times))
+    plt.show()
+    return np.max(velocity)
+    #     max_idx = np.argmax(velocity)
+    #     _times = times
+    #     _positions = positions
+    #     times = times[max_idx - 1 : max_idx + 3]
+    #     positions = positions[max_idx - 1 : max_idx + 3]
+    #
+    #     plt.scatter(_times, _positions)
+    # else:
+    #     return 0
+    # plt.scatter(times, positions)
+    # poly = np.polynomial.Polynomial.fit(times, positions, 3)
+    # stimes = np.arange(times[0], times[-1], 0.1)
+    #
+    # plt.plot(stimes, poly(stimes))
+
+    # if len(times) < 5:
+    #     return 0.0
+    # spline = make_smoothing_spline(times, positions, lam=0.1)
+    # # plt.scatter(times, x)
+    # # # plt.plot(times[1:], np.diff(positions))
+    # # # plt.axhline(median_velocity)
+    # # plt.plot(smooth_times, 1.0 / (np.exp(poly(smooth_times)) + 1.0))
+    # smooth_times = np.arange(times[0], times[-1], 0.1)
+    # plt.plot(smooth_times, spline(smooth_times))
+    # #
+    # # # axes[0].plot(
+    # # #     np.linspace(times[0], times[-1], 100),
+    # # #     poly(np.linspace(times[0], times[-1], 100)),
+    # # # )
+    # plt.show()
+    # return 1
+    # if len(positions) < 4:
+    #     return np.median(np.diff(times) / np.diff(positions))
+    #
+    # sigma = np.ones_like(times)
+    # sigma[:3] = 0.1
+    # sigma[-3:] = 0.1
+    # opt, _ = curve_fit(
+    #     boltzmann,
+    #     times,
+    #     positions,
+    #     p0=[1.0, 0.0, 1.0, 1.0],
+    #     bounds=([0.0, 0.0, 0.0, -10.0], [1.0, 1.0, 10.0, 10.0]),
+    #     sigma=sigma,
+    # )
+    #
+    # plt.scatter(times, positions)
+    # plt.show()
 
 
 def init_parser(parser: argparse.ArgumentParser):
@@ -260,6 +368,7 @@ def main(args: argparse.Namespace):
         if not args.single:
             data = reduce_raman_single_spectra(data)
 
+        print(data["velocity"])
         # must be accessed after reduction
         if args.frames is not None:
             data = data[data["frames"] > args.frames]
