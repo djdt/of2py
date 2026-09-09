@@ -1,14 +1,14 @@
-from scipy.interpolate import make_smoothing_spline, CubicSpline
-from scipy.optimize import curve_fit
-import numpy as np
+import argparse
+import logging
 from pathlib import Path
-import matplotlib.pyplot as plt
 
+import matplotlib.pyplot as plt
+import numpy as np
+import numpy.lib.recfunctions as rfn
+from scipy.interpolate import CubicSpline
 from scipy.ndimage import gaussian_filter1d
 
-import argparse
-
-import logging
+logger = logging.getLogger(__name__)
 
 
 def read_of2py_file(file: str | Path) -> tuple[np.ndarray, np.ndarray]:
@@ -17,9 +17,21 @@ def read_of2py_file(file: str | Path) -> tuple[np.ndarray, np.ndarray]:
         x = np.loadtxt(
             fp,
             delimiter=",",
-            dtype=[("id", int), ("frames", int), ("spectra", float, 2304)],
+            dtype=[
+                ("id", int),
+                ("frame", int),
+                ("y", float),
+                ("pos", float),
+                ("spectra", float, 2304),
+            ],
         )
-    shifts = np.fromiter((t[6:] for t in header.split(",")[2:]), dtype=float)
+        x = rfn.append_fields(
+            x,
+            ("cluster", "confidence"),
+            (np.full(x.shape, "", dtype="U16"), np.full(x.shape, 0.0)),
+        )
+    # shifts = np.fromiter((t[6:] for t in header.split(",")[2:]), dtype=float)
+    shifts = np.arange(2304)
     return shifts, x
 
 
@@ -185,7 +197,9 @@ def velocity_from_positions(
 
 def init_parser(parser: argparse.ArgumentParser):
     parser.set_defaults(func=main)
-    parser.add_argument("files", type=Path, nargs="+", help="CSV output(s) from of2py")
+    parser.add_argument(
+        "files", type=Path, nargs="+", help="CSV output(s) from of2py or BRAVE"
+    )
     # input
     parser.add_argument(
         "--mode",
@@ -265,9 +279,9 @@ def main(args: argparse.Namespace):
             file_type = "of2py"
             shifts, data = read_of2py_file(file)
 
-        if args.single and file_type != "brave_single":
+        if args.single and file_type not in ["of2py", "brave_single"]:
             raise TypeError(
-                "--single can only be used with a BRAVE single_spectra.csv file"
+                "--single can only be used with a BRAVE single_spectra.csv or 'of2py track' file"
             )
 
         if args.id is not None:
@@ -275,15 +289,17 @@ def main(args: argparse.Namespace):
 
         if args.cluster is not None:
             if file_type == "of2py":
-                logging.warning(
+                logger.warning(
                     "filtering by cluster not availble for 'of2py track' files"
                 )
             else:
                 data = data[data["cluster"] == args.cluster]
 
         if args.pos is not None:
-            if file_type != "brave_single":
-                raise TypeError("--pos requires a BRAVE single_spectra.csv file")
+            if file_type not in ["brave_single", "of2py"]:
+                raise TypeError(
+                    "--pos requires a BRAVE single_spectra.csv or 'of2py track' file"
+                )
             data = data[
                 np.logical_and(data["pos"] > args.pos[0], data["pos"] < args.pos[1])
             ]
@@ -297,7 +313,7 @@ def main(args: argparse.Namespace):
             data = data[data["frames"] > args.frames]
 
         if data.size == 0:
-            logging.warning(f"all spectra filtered for {file}")
+            logger.warning(f"all spectra filtered for {file}")
             continue
 
         stddev = None
