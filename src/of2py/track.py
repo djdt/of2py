@@ -112,7 +112,7 @@ def init_parser(parser: argparse.ArgumentParser):
         "--roi",
         type=int,
         nargs=4,
-        default=[10, -10, -100, -10],
+        default=[300, -300, -110, -10],
         metavar=("x", "width", "y", "height"),
         help="roi for particle extraction",
     )
@@ -198,7 +198,8 @@ def main(args: argparse.Namespace):
                     int(particle.current_pos[1]) + 3,
                     int(particle.current_pos[0]) + 3,
                 )
-                cv2.rectangle(x, p0, p1, (0, 0, 255), 3)
+                c = (0, 0, 255) if particle.current_frame == frame else (255, 0, 0)
+                cv2.rectangle(x, p0, p1, c, 3)
             cv2.rectangle(
                 x,
                 (args.roi[0], args.roi[2]),
