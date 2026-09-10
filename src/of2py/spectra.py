@@ -307,7 +307,6 @@ def main(args: argparse.Namespace):
         if not args.single:
             data = reduce_raman_single_spectra(data)
 
-        print(data["velocity"])
         # must be accessed after reduction
         if args.frames is not None:
             data = data[data["frames"] > args.frames]

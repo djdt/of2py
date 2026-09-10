@@ -12,21 +12,17 @@ SPECTRA_OFFSET = 50  # the expected position for rayleigh scattering, i.e., 0 sh
 
 
 class Particle:
-    def __init__(self, id: int, frame: int, pos: np.ndarray, spectra: np.ndarray):
+    def __init__(self, id: int, frame: int, pos: np.ndarray):
         assert pos.size == 2
         self.id = id
-        self.tracked = {frame: (pos, spectra)}
+        # self.tracked = {frame: (pos, spectra)}
 
-        self.current_pos = pos
-        self.current_frame = frame
-
-    def addFrame(self, frame: int, pos: np.ndarray, spectra: np.ndarray):
-        self.tracked[frame] = (pos, spectra)
-        self.current_pos = pos
-        self.current_frame = frame
+        self.frames = [frame]
+        self.positions = [pos]
+        self.spectra = []
 
     def distance(self, other: Particle) -> float:
-        return float(np.linalg.norm(self.current_pos - other.current_pos))
+        return float(np.linalg.norm(self.positions[-1] - other.positions[-1]))
 
 
 def detect_particles(
@@ -52,20 +48,30 @@ def detect_particles(
     return centers
 
 
-def interpolate_background(image: np.ndarray, px: int, width: int = 3) -> np.ndarray:
-    def interp_row(x: np.ndarray, xs: np.ndarray):
-        return np.interp(xs, np.arange(x.size), x)
+def interpolate_background(
+    image: np.ndarray, positions: list, blanking_width: int = 5
+) -> np.ndarray:
+    def interp_row_nans(x: np.ndarray):
+        nans = np.isnan(x)
+        return np.interp(np.arange(x.size), np.flatnonzero(~nans), x[~nans])
 
-    bg = image[:, px - width * 5 : px + width * 5]
-    xs = np.arange(px + width * 4, px + width * 6)
-    return np.apply_along_axis(interp_row, 1, bg, xs)
+    background = image.astype(float)
+    for _, pos in np.around(positions).astype(int):
+        background[:, pos - blanking_width : pos + blanking_width] = np.nan
+
+    return np.apply_along_axis(interp_row_nans, 1, background)
 
 
-def read_spectra(image: np.ndarray, pos: np.ndarray, width: int = 3) -> np.ndarray:
-    px, py = int(pos[1]), int(pos[0])
-    spectra = image[:, px - width : px + width]
-    bg = interpolate_background(image, px, width)
-    spectra = np.mean(spectra - bg, axis=1)
+def read_spectra(
+    image: np.ndarray, pos: np.ndarray, background: np.ndarray, width: int = 3
+) -> np.ndarray:
+    py, px = np.around(pos).astype(int)
+    spectra = np.mean(
+        image[:, px - width // 2 : px + width // 2 + 1]
+        - background[:, px - width // 2 : px + width // 2 + 1],
+        axis=1,
+    )
+
     shift = image.shape[1] - py
     spectra = np.roll(spectra, shift - SPECTRA_OFFSET, axis=0)
     # spectra[:shift] = 0.0
@@ -125,6 +131,9 @@ def init_parser(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--min-size", type=int, default=8, help="minmum size of particle, in pixels"
     )
+    parser.add_argument(
+        "--calibration", type=Path, help="path to a Raman shift calibration file"
+    )
 
 
 def main(args: argparse.Namespace):
@@ -164,14 +173,14 @@ def main(args: argparse.Namespace):
             break
 
         for pos in detect_particles(image, args.threshold, args.roi, args.min_size):
-            spectra = read_spectra(image, pos, args.spectra_width)
-            new = Particle(particle_id, frame, pos, spectra)
+            new = Particle(particle_id, frame, pos)
             particle_id += 1
             is_new = True
 
             for old in tracked_particles:
                 if new.distance(old) < args.distance:
-                    old.addFrame(frame, pos, spectra)
+                    old.frames.append(frame)
+                    old.positions.append(pos)
                     is_new = False
                     continue
 
@@ -180,25 +189,31 @@ def main(args: argparse.Namespace):
 
         # remove particles that have exited frame
         for particle in tracked_particles:
-            if frame - particle.current_frame > args.track_frames:
+            if frame - particle.frames[-1] > args.track_frames:
                 exited_particles.append(particle)
                 tracked_particles.remove(particle)
 
+        # mask out all particles and interpolate the background over them
+        background = interpolate_background(
+            image, [particle.positions[-1] for particle in tracked_particles]
+        )
+
+        # extract spectra
+        for particle in tracked_particles:
+            spectra = read_spectra(
+                image, particle.positions[-1], background, args.spectra_width
+            )
+            particle.spectra.append(spectra)
+
         if args.show or args.record is not None:
             x = np.clip(image, 0.0, np.percentile(image, 90))
-            x = cv2.normalize(x, None, 1, 0, cv2.NORM_MINMAX)
-            x = np.uint8(x * 255.0)
+            x = (cv2.normalize(x, None, 1, 0, cv2.NORM_MINMAX) * 255.0).astype(np.uint8)
             x = cv2.cvtColor(x, cv2.COLOR_GRAY2BGR)
             for particle in tracked_particles:
-                p0 = (
-                    int(particle.current_pos[1]) - 3,
-                    int(particle.current_pos[0]) - 3,
-                )
-                p1 = (
-                    int(particle.current_pos[1]) + 3,
-                    int(particle.current_pos[0]) + 3,
-                )
-                c = (0, 0, 255) if particle.current_frame == frame else (255, 0, 0)
+                pos = particle.positions[-1]
+                p0 = (int(pos[1]) - 5, int(pos[0]) - 5)
+                p1 = (int(pos[1]) + 5, int(pos[0]) + 5)
+                c = (0, 0, 255) if particle.frames[-1] == frame else (255, 0, 0)
                 cv2.rectangle(x, p0, p1, c, 3)
             cv2.rectangle(
                 x,
@@ -229,10 +244,11 @@ def main(args: argparse.Namespace):
         with open(args.output, "w") as fp:
             fp.write("id,frame,y,x\n")
             for particle in exited_particles:
-                for frame, (pos, spectra) in particle.tracked.items():
-                    images.seek(frame)
+                for frame, pos, spectra in zip(
+                    particle.frames, particle.positions, particle.spectra
+                ):
                     fp.write(
-                        f"{particle.id},{frame},{pos[0]:.4f},{pos[1]:.4f},{','.join(f'{s:.4f}' for s in spectra)}\n"
+                        f"{particle.id},{frame},{pos[0]:.2f},{pos[1]:.2f},{','.join(f'{s:.6g}' for s in spectra)}\n"
                     )
     #
     # if args.spectra is not None:
