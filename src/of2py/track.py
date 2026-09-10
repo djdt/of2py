@@ -49,33 +49,47 @@ def detect_particles(
 
 
 def interpolate_background(
-    image: np.ndarray, positions: list, blanking_width: int = 5
+    image: np.ndarray, positions: list, width: int = 10
 ) -> np.ndarray:
-    def interp_row_nans(x: np.ndarray):
-        nans = np.isnan(x)
-        return np.interp(np.arange(x.size), np.flatnonzero(~nans), x[~nans])
+    def interp_row_nans(x: np.ndarray, mask: np.ndarray):
+        x[~mask] = np.interp(np.flatnonzero(~mask), np.flatnonzero(mask), x[mask])
+        return x
 
-    background = image.astype(float)
+    mask = np.ones(image.shape[1], dtype=bool)
     for _, pos in np.around(positions).astype(int):
-        background[:, pos - blanking_width : pos + blanking_width] = np.nan
+        mask[pos - width // 2 : pos + width // 2] = False
 
-    return np.apply_along_axis(interp_row_nans, 1, background)
+    return np.apply_along_axis(interp_row_nans, 1, image.astype(float), mask=mask)
 
 
 def read_spectra(
     image: np.ndarray, pos: np.ndarray, background: np.ndarray, width: int = 3
 ) -> np.ndarray:
     py, px = np.around(pos).astype(int)
-    spectra = np.mean(
-        image[:, px - width // 2 : px + width // 2 + 1]
-        - background[:, px - width // 2 : px + width // 2 + 1],
-        axis=1,
-    )
+    spectra = np.mean(image[:, px - width // 2 : px + width // 2 + 1], axis=1)
+    spectra_bg = np.mean(background[:, px - width // 2 : px + width // 2 + 1], axis=1)
 
     shift = image.shape[1] - py
-    spectra = np.roll(spectra, shift - SPECTRA_OFFSET, axis=0)
-    # spectra[:shift] = 0.0
+    spectra = np.roll(spectra - spectra_bg, shift - SPECTRA_OFFSET, axis=0)
     return spectra[::-1]
+
+
+def roll_along_axis(x: np.ndarray, shifts: np.ndarray, axis: int = 0) -> np.ndarray:
+    if shifts.size != x.shape[axis]:
+        raise ValueError("shifts must be size of x in rolling axis")
+    if np.any(shifts < 0):
+        raise ValueError("all shifts must be positive")
+
+    x = np.swapaxes(x, axis, -1)
+    xx = np.concatenate((x, x), axis=1)
+
+    view = np.lib.stride_tricks.as_strided(
+        xx,
+        shape=(x.shape[0], x.shape[1], x.shape[1]),
+        strides=(xx.strides[0], xx.strides[1], xx.strides[1]),
+    )
+    x = view[np.arange(x.shape[0]), x.shape[1] - shifts - 1]
+    return np.swapaxes(x, -1, axis)
 
 
 def init_parser(parser: argparse.ArgumentParser):
@@ -115,10 +129,17 @@ def init_parser(parser: argparse.ArgumentParser):
         help="width of spectra to extract",
     )
     parser.add_argument(
+        "--background-width",
+        type=int,
+        default=11,
+        metavar="PIXELS",
+        help="width of background to blank",
+    )
+    parser.add_argument(
         "--roi",
         type=int,
         nargs=4,
-        default=[300, -300, -110, -10],
+        default=[500, -500, -110, -10],
         metavar=("x", "width", "y", "height"),
         help="roi for particle extraction",
     )
@@ -132,8 +153,14 @@ def init_parser(parser: argparse.ArgumentParser):
         "--min-size", type=int, default=8, help="minmum size of particle, in pixels"
     )
     parser.add_argument(
-        "--calibration", type=Path, help="path to a Raman shift calibration file"
+        "--image-offsets",
+        type=Path,
+        help="path to a numpy array of shifts for each image row. "
+        "Useful when the Raman camera is out of alignment",
     )
+    # parser.add_argument(
+    #     "--calibration", type=Path, help="path to a Raman shift calibration file"
+    # )
 
 
 def main(args: argparse.Namespace):
@@ -155,6 +182,9 @@ def main(args: argparse.Namespace):
             (images.width, images.height),
             True,
         )
+    offsets = None
+    if args.image_offsets is not None:
+        offsets = np.load(args.image_offsets)
 
     particle_id = 0
     exited_particles = []
@@ -176,6 +206,9 @@ def main(args: argparse.Namespace):
             print(f"\n{args.video} :: end of file")
             break
 
+        if offsets is not None:
+            image = roll_along_axis(image, offsets, 1)
+
         for pos in detect_particles(image, args.threshold, args.roi, args.min_size):
             new = Particle(particle_id, frame, pos)
             particle_id += 1
@@ -186,7 +219,7 @@ def main(args: argparse.Namespace):
                     old.frames.append(frame)
                     old.positions.append(pos)
                     is_new = False
-                    continue
+                    break
 
             if is_new:
                 tracked_particles.append(new)
@@ -199,11 +232,12 @@ def main(args: argparse.Namespace):
 
         # mask out all particles and interpolate the background over them
         background = interpolate_background(
-            image, [particle.positions[-1] for particle in tracked_particles]
+            image,
+            [particle.positions[-1] for particle in tracked_particles],
+            width=args.background_width,
         )
-
         # extract spectra
-        for particle in tracked_particles:
+        for particle in tracked_particles[:]:
             spectra = read_spectra(
                 image, particle.positions[-1], background, args.spectra_width
             )
@@ -249,16 +283,40 @@ def main(args: argparse.Namespace):
         sys.exit()
 
     exited_particles.extend(tracked_particles)
+    exited_particles = sorted(exited_particles, key=lambda p: p.id)
 
     shifts = np.arange(images.height) - SPECTRA_OFFSET
 
     if args.output is not None:
-        with open(args.output, "w") as fp:
-            fp.write(f"id,frame,y,x,{','.join(f'shift[{s:.2f}]' for s in shifts)}\n")
+        if args.output.suffix == ".npz":
+            size = np.sum([len(p.frames) for p in exited_particles])
+            data = np.empty(
+                size,
+                dtype=[
+                    ("id", int),
+                    ("frame", int),
+                    ("xpos", float),
+                    ("ypos", float),
+                    ("spectra", float, 2304),
+                ],
+            )
+            i = 0
             for particle in exited_particles:
                 for frame, pos, spectra in zip(
                     particle.frames, particle.positions, particle.spectra
                 ):
-                    fp.write(
-                        f"{particle.id},{frame},{pos[0]:.2f},{pos[1]:.2f},{','.join(f'{s:.6g}' for s in spectra)}\n"
-                    )
+                    data[i] = (particle.id, frame, pos[1], pos[0], spectra)
+                    i += 1
+            np.savez_compressed(args.output, particles=data, shifts=shifts)
+        else:
+            with open(args.output, "w") as fp:
+                fp.write(
+                    f"id,frame,xpos,ypos,{','.join(f'shift[{s:.2f}]' for s in shifts)}\n"
+                )
+                for particle in exited_particles:
+                    for frame, pos, spectra in zip(
+                        particle.frames, particle.positions, particle.spectra
+                    ):
+                        fp.write(
+                            f"{particle.id},{frame},{pos[1]:.2f},{pos[0]:.2f},{','.join(f'{s:.6g}' for s in spectra)}\n"
+                        )

@@ -11,28 +11,32 @@ from scipy.ndimage import gaussian_filter1d
 logger = logging.getLogger(__name__)
 
 
-def read_of2py_file(file: str | Path) -> tuple[np.ndarray, np.ndarray]:
+def read_of2py_csv(file: str | Path) -> tuple[np.ndarray, np.ndarray]:
     with open(file, "r") as fp:
         header = fp.readline()
+        shift_header = header.split(",")[4:]
+        if len(shift_header) != 2304:
+            raise ValueError(f"expected length 2304, not {len(shift_header)}")
+        shifts = np.array(
+            [float(s[s.find("[") + 1 : s.rfind("]")]) for s in shift_header]
+        )
         x = np.loadtxt(
             fp,
             delimiter=",",
             dtype=[
                 ("id", int),
                 ("frame", int),
-                ("y", float),
-                ("pos", float),
+                ("xpos", float),
+                ("ypos", float),
                 ("spectra", float, 2304),
             ],
         )
-        x = rfn.append_fields(
-            x,
-            ("cluster", "confidence"),
-            (np.full(x.shape, "", dtype="U16"), np.full(x.shape, 0.0)),
-        )
-    # shifts = np.fromiter((t[6:] for t in header.split(",")[2:]), dtype=float)
-    shifts = np.arange(2304)
     return shifts, x
+
+
+def read_of2py_npz(file: str | Path) -> tuple[np.ndarray, np.ndarray]:
+    npz = np.load(file)
+    return npz["shifts"], npz["particles"]
 
 
 def read_raman_spectra(path: Path) -> tuple[np.ndarray, np.ndarray]:
@@ -96,7 +100,7 @@ def read_raman_single_spectra(
         ("type", "U1"),
         ("cluster", "U16"),
         ("confidence", float),
-        ("pos", int),
+        ("xpos", int),
         ("spectra", float, 2304),
     ]
     with path.open("r") as fp:
@@ -152,7 +156,7 @@ def reduce_raman_single_spectra(x: np.ndarray) -> np.ndarray:
         reduced[i]["cluster"] = x[x["id"] == id][-1]["cluster"]
         reduced[i]["confidence"] = x[x["id"] == id][-1]["confidence"]
         reduced[i]["velocity"] = velocity_from_positions(
-            x[x["id"] == id]["pos"], x[x["id"] == id]["frame"]
+            x[x["id"] == id]["xpos"], x[x["id"] == id]["frame"]
         )
         reduced[i]["spectra"] = np.sum(x[x["id"] == id]["spectra"], axis=0)
 
@@ -183,6 +187,8 @@ def velocity_from_positions(
         return velocity[0]
     elif velocity.size < 3:
         return np.max(velocity)
+    elif not np.all(np.diff(velocity) > 0.0):
+        return np.nan
 
     idx = np.argmax(velocity) + 1
     if len(times) > 6:
@@ -198,7 +204,7 @@ def velocity_from_positions(
 def init_parser(parser: argparse.ArgumentParser):
     parser.set_defaults(func=main)
     parser.add_argument(
-        "files", type=Path, nargs="+", help="CSV output(s) from of2py or BRAVE"
+        "files", type=Path, nargs="+", help="CSV / NPZ output(s) from of2py or BRAVE"
     )
     # input
     parser.add_argument(
@@ -277,7 +283,16 @@ def main(args: argparse.Namespace):
             shifts, data = read_raman_single_spectra(file, mode=args.mode)
         else:  # assume of2py
             file_type = "of2py"
-            shifts, data = read_of2py_file(file)
+            if file.suffix == ".npz":
+                shifts, data = read_of2py_npz(file)
+            else:
+                shifts, data = read_of2py_csv(file)
+
+            data = rfn.append_fields(
+                data,
+                ("cluster", "confidence"),
+                (np.full(data.shape, "", dtype="U16"), np.full(data.shape, 0.0)),
+            )
 
         if args.single and file_type not in ["of2py", "brave_single"]:
             raise TypeError(
@@ -301,7 +316,7 @@ def main(args: argparse.Namespace):
                     "--pos requires a BRAVE single_spectra.csv or 'of2py track' file"
                 )
             data = data[
-                np.logical_and(data["pos"] > args.pos[0], data["pos"] < args.pos[1])
+                np.logical_and(data["xpos"] > args.pos[0], data["xpos"] < args.pos[1])
             ]
 
         if not args.single:
