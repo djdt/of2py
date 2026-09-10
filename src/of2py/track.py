@@ -164,12 +164,16 @@ def main(args: argparse.Namespace):
         if args.roi[i] < 0:
             args.roi[i] = (images.width if i < 2 else images.height) + args.roi[i]
 
+    print(
+        f"{args.video} :: {images.width} x {images.height} :: {images.n_frames} frames :: tracking particles"
+    )
+
     while True:
         try:
             images.seek(frame)
             image = np.array(images)
         except EOFError:
-            print(f"{args.video} :: end of file")
+            print(f"\n{args.video} :: end of file")
             break
 
         for pos in detect_particles(image, args.threshold, args.roi, args.min_size):
@@ -209,12 +213,16 @@ def main(args: argparse.Namespace):
             x = np.clip(image, 0.0, np.percentile(image, 90))
             x = (cv2.normalize(x, None, 1, 0, cv2.NORM_MINMAX) * 255.0).astype(np.uint8)
             x = cv2.cvtColor(x, cv2.COLOR_GRAY2BGR)
+
+            color = (0, 0, 255)
+            missing_color = (255, 0, 0)
+
             for particle in tracked_particles:
+                current = particle.frames[-1] == frame
                 pos = particle.positions[-1]
                 p0 = (int(pos[1]) - 5, int(pos[0]) - 5)
                 p1 = (int(pos[1]) + 5, int(pos[0]) + 5)
-                c = (0, 0, 255) if particle.frames[-1] == frame else (255, 0, 0)
-                cv2.rectangle(x, p0, p1, c, 3)
+                cv2.rectangle(x, p0, p1, color if current else missing_color, 3)
             cv2.rectangle(
                 x,
                 (args.roi[0], args.roi[2]),
@@ -234,15 +242,19 @@ def main(args: argparse.Namespace):
                     frame -= 1
                     continue
         frame += 1
+        print(f"\tframe {frame} :: {len(tracked_particles)} active particles", end="\r")
+
     # end while
     if args.show:
         sys.exit()
 
     exited_particles.extend(tracked_particles)
 
+    shifts = np.arange(images.height) - SPECTRA_OFFSET
+
     if args.output is not None:
         with open(args.output, "w") as fp:
-            fp.write("id,frame,y,x\n")
+            fp.write(f"id,frame,y,x,{','.join(f'shift[{s:.2f}]' for s in shifts)}\n")
             for particle in exited_particles:
                 for frame, pos, spectra in zip(
                     particle.frames, particle.positions, particle.spectra
@@ -250,24 +262,3 @@ def main(args: argparse.Namespace):
                     fp.write(
                         f"{particle.id},{frame},{pos[0]:.2f},{pos[1]:.2f},{','.join(f'{s:.6g}' for s in spectra)}\n"
                     )
-    #
-    # if args.spectra is not None:
-    #     spectras = {}
-    #     for particle in exited_particles:
-    #         for frame, (pos, _) in particle.tracked.items():
-    #             images.seek(frame)
-    #             image = np.array(images)
-    #             if args.smooth is not None:
-    #                 image = ndi.gaussian_filter(image, args.smooth)
-    #             array = spectras.get(particle.id, [])
-    #             array.append(read_spectra(image, pos, args.spectra_width))
-    #             spectras[particle.id] = array
-    #
-    #     if args.spectra.suffix.lower() == ".npz":
-    #         out = {f"p{id}": np.stack(val, axis=0) for id, val in spectras.items()}
-    #         np.savez_compressed(args.spectra, **out)  # type: ignore
-    #     elif args.spectra.suffix.lower() == ".csv":
-    #         data = np.stack([np.mean(val, axis=0) for val in spectras.values()], axis=0)
-    #         np.savetxt(args.spectra, data)
-    #     else:
-    #         raise ValueError("unknown file type for spectra, must be .csv or .npz")
