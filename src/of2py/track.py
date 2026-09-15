@@ -1,5 +1,6 @@
 import argparse
 import sys
+from importlib.metadata import version
 from pathlib import Path
 
 import numpy as np
@@ -99,27 +100,14 @@ def init_parser(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--record", type=Path, help="save a video of the output of --show"
     )
-    parser.add_argument("--output", type=Path, help="save tracked particles to csv")
+    parser.add_argument(
+        "-o", "--output", type=Path, help="save tracked particles to csv"
+    )
     parser.add_argument(
         "--threshold",
         type=float,
         default=200.0,
         help="minimum value to detect a particle",
-    )
-    parser.add_argument(
-        "--smooth",
-        type=float,
-        metavar="SIGMA",
-        nargs="?",
-        const=1.0,
-        help="smooth video with Gaussian before processing",
-    )
-    parser.add_argument(
-        "--distance",
-        type=float,
-        default=20.0,
-        metavar="PIXELS",
-        help="minimum distance between particles / maximum distance to track",
     )
     parser.add_argument(
         "--spectra-width",
@@ -144,10 +132,25 @@ def init_parser(parser: argparse.ArgumentParser):
         help="roi for particle extraction",
     )
     parser.add_argument(
+        "--track-distance",
+        type=float,
+        default=20.0,
+        metavar="PIXELS",
+        help="minimum distance between particles / maximum distance to track",
+    )
+    parser.add_argument(
         "--track-frames",
         type=int,
         default=5,
         help="number of frames a particle must disappear before being removed",
+    )
+    parser.add_argument(
+        "--smooth",
+        type=float,
+        metavar="SIGMA",
+        nargs="?",
+        const=1.0,
+        help="smooth video with Gaussian before processing",
     )
     parser.add_argument(
         "--min-size", type=int, default=8, help="minmum size of particle, in pixels"
@@ -310,6 +313,7 @@ def main(args: argparse.Namespace):
             np.savez_compressed(args.output, particles=data, shifts=shifts)
         else:
             with open(args.output, "w") as fp:
+                fp.write(f"#of2py track v{version('of2py')}")
                 fp.write(
                     f"id,frame,xpos,ypos,{','.join(f'shift[{s:.2f}]' for s in shifts)}\n"
                 )
