@@ -218,7 +218,7 @@ def main(args: argparse.Namespace):
             is_new = True
 
             for old in tracked_particles:
-                if new.distance(old) < args.distance:
+                if new.distance(old) < args.track_distance:
                     old.frames.append(frame)
                     old.positions.append(pos)
                     is_new = False
