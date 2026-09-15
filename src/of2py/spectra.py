@@ -12,7 +12,9 @@ logger = logging.getLogger(__name__)
 
 def read_of2py_csv(file: str | Path) -> tuple[np.ndarray, np.ndarray]:
     with open(file, "r") as fp:
-        header = fp.readline()
+        while header := fp.readline():
+            if header.startswith("#"):
+                continue
         shift_header = header.split(",")[4:]
         if len(shift_header) != 2304:
             raise ValueError(f"expected length 2304, not {len(shift_header)}")
