@@ -6,10 +6,7 @@ from pathlib import Path
 import numpy as np
 import PIL.Image
 import scipy.ndimage as ndi
-
-px_to_shift = np.polynomial.Polynomial([8.1583, 1.5711, 2.8063e-4])
-
-SPECTRA_OFFSET = 50  # the expected position for rayleigh scattering, i.e., 0 shift
+from matplotlib.pylab import rayleigh
 
 
 class Particle:
@@ -64,14 +61,18 @@ def interpolate_background(
 
 
 def read_spectra(
-    image: np.ndarray, pos: np.ndarray, background: np.ndarray, width: int = 3
+    image: np.ndarray,
+    pos: np.ndarray,
+    background: np.ndarray,
+    width: int = 3,
+    rayleigh_offset: int = 0,
 ) -> np.ndarray:
     py, px = np.around(pos).astype(int)
     spectra = np.mean(image[:, px - width // 2 : px + width // 2 + 1], axis=1)
     spectra_bg = np.mean(background[:, px - width // 2 : px + width // 2 + 1], axis=1)
 
     shift = image.shape[1] - py
-    spectra = np.roll(spectra - spectra_bg, shift - SPECTRA_OFFSET, axis=0)
+    spectra = np.roll(spectra - spectra_bg, shift - rayleigh_offset, axis=0)
     return spectra[::-1]
 
 
@@ -161,9 +162,11 @@ def init_parser(parser: argparse.ArgumentParser):
         help="path to a numpy array of shifts for each image row. "
         "Useful when the Raman camera is out of alignment",
     )
-    # parser.add_argument(
-    #     "--calibration", type=Path, help="path to a Raman shift calibration file"
-    # )
+    parser.add_argument(
+        "--calibration",
+        type=Path,
+        help="path to a Raman shift calibration file, usually found in /usr/share/braveanalytics",
+    )
 
 
 def main(args: argparse.Namespace):
@@ -188,6 +191,17 @@ def main(args: argparse.Namespace):
     offsets = None
     if args.image_offsets is not None:
         offsets = np.load(args.image_offsets)
+
+    if args.calibration is not None:
+        shifts = np.loadtxt(args.calibration, delimiter=";")
+        if len(shifts) != images.height:
+            raise ValueError(
+                f"calibration vector should be {images.height}, not {len(shifts)}"
+            )
+    else:
+        shifts = np.arange(images.height)
+
+    rayleigh_offset = int(np.searchsorted(shifts, 0.0))
 
     particle_id = 0
     exited_particles = []
@@ -242,7 +256,11 @@ def main(args: argparse.Namespace):
         # extract spectra
         for particle in tracked_particles[:]:
             spectra = read_spectra(
-                image, particle.positions[-1], background, args.spectra_width
+                image,
+                particle.positions[-1],
+                background,
+                args.spectra_width,
+                rayleigh_offset,
             )
             particle.spectra.append(spectra)
 
@@ -288,8 +306,6 @@ def main(args: argparse.Namespace):
     exited_particles.extend(tracked_particles)
     exited_particles = sorted(exited_particles, key=lambda p: p.id)
 
-    shifts = np.arange(images.height) - SPECTRA_OFFSET
-
     if args.output is not None:
         if args.output.suffix == ".npz":
             size = np.sum([len(p.frames) for p in exited_particles])
@@ -315,7 +331,7 @@ def main(args: argparse.Namespace):
             with open(args.output, "w") as fp:
                 fp.write(f"#of2py track v{version('of2py')}")
                 fp.write(
-                    f"id,frame,xpos,ypos,{','.join(f'shift[{s:.2f}]' for s in shifts)}\n"
+                    f"id,frame,xpos,ypos,{','.join(f'shift_{s:.2f}' for s in shifts)}\n"
                 )
                 for particle in exited_particles:
                     for frame, pos, spectra in zip(

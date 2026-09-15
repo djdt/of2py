@@ -4,7 +4,6 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import numpy.lib.recfunctions as rfn
 from scipy.interpolate import CubicSpline
 from scipy.ndimage import gaussian_filter1d
 
@@ -17,9 +16,7 @@ def read_of2py_csv(file: str | Path) -> tuple[np.ndarray, np.ndarray]:
         shift_header = header.split(",")[4:]
         if len(shift_header) != 2304:
             raise ValueError(f"expected length 2304, not {len(shift_header)}")
-        shifts = np.array(
-            [float(s[s.find("[") + 1 : s.rfind("]")]) for s in shift_header]
-        )
+        shifts = np.fromiter((s[6:] for s in shift_header), dtype=float)
         x = np.loadtxt(
             fp,
             delimiter=",",
@@ -140,6 +137,7 @@ def reduce_raman_single_spectra(x: np.ndarray) -> np.ndarray:
     Sums spectra with the same ID and adds the number of recorded frames.
 
     """
+    assert x.dtype.names is not None
     ids, counts = np.unique(x["id"], return_counts=True)
     reduced_dtype = [
         ("id", int),
@@ -153,8 +151,12 @@ def reduce_raman_single_spectra(x: np.ndarray) -> np.ndarray:
     for i, (id, count) in enumerate(zip(ids, counts)):
         reduced[i]["id"] = id
         reduced[i]["frames"] = count
-        reduced[i]["cluster"] = x[x["id"] == id][-1]["cluster"]
-        reduced[i]["confidence"] = x[x["id"] == id][-1]["confidence"]
+        reduced[i]["cluster"] = (
+            x[x["id"] == id][-1]["cluster"] if "cluster" in x.dtype.names else ""
+        )
+        reduced[i]["confidence"] = (
+            x[x["id"] == id][-1]["confidence"] if "confidence" in x.dtype.names else 0.0
+        )
         reduced[i]["velocity"] = velocity_from_positions(
             x[x["id"] == id]["xpos"], x[x["id"] == id]["frame"]
         )
@@ -274,25 +276,20 @@ def init_parser(parser: argparse.ArgumentParser):
 def main(args: argparse.Namespace):
     for file in args.files:
         assert isinstance(file, Path)
-        header = file.open("r").readline()
-        if "singleSpectraCount" in header:  # is raman_spectra format
-            file_type = "brave"
-            shifts, data = read_raman_spectra(file)
-        elif "materialId" in header:  # still BRAVE format
-            file_type = "brave_single"
-            shifts, data = read_raman_single_spectra(file, mode=args.mode)
-        else:  # assume of2py
+        if file.suffix == ".npz":
             file_type = "of2py"
-            if file.suffix == ".npz":
-                shifts, data = read_of2py_npz(file)
-            else:
+            shifts, data = read_of2py_npz(file)
+        elif file.suffix.lower() == ".csv":
+            header = file.open("r").readline()
+            if "singleSpectraCount" in header:  # is raman_spectra format
+                file_type = "brave"
+                shifts, data = read_raman_spectra(file)
+            elif "materialId" in header:  # still BRAVE format
+                file_type = "brave_single"
+                shifts, data = read_raman_single_spectra(file, mode=args.mode)
+            else:  # assume of2py
+                file_type = "of2py"
                 shifts, data = read_of2py_csv(file)
-
-            data = rfn.append_fields(
-                data,
-                ("cluster", "confidence"),
-                (np.full(data.shape, "", dtype="U16"), np.full(data.shape, 0.0)),
-            )
 
         if args.single and file_type not in ["of2py", "brave_single"]:
             raise TypeError(
