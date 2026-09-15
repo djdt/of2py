@@ -6,21 +6,32 @@ from pathlib import Path
 import numpy as np
 import PIL.Image
 import scipy.ndimage as ndi
-from matplotlib.pylab import rayleigh
 
 
 class Particle:
-    def __init__(self, id: int, frame: int, pos: np.ndarray):
+    ID_COUNTER = 0
+
+    def __init__(self, frame: int, pos: np.ndarray, size: int, intensity: float):
         assert pos.size == 2
-        self.id = id
-        # self.tracked = {frame: (pos, spectra)}
+        self.id = Particle.ID_COUNTER
+        Particle.ID_COUNTER += 1
 
         self.frames = [frame]
         self.positions = [pos]
+        self.sizes = [size]
+        self.intensities = [intensity]
         self.spectra = []
 
     def distance(self, other: Particle) -> float:
         return float(np.linalg.norm(self.positions[-1] - other.positions[-1]))
+
+    # def position(self) -> tuple[float, float]:
+    #     return self.positions[-1][0], self.positions[-1][1]
+    #
+    # def integerPosition(self) -> tuple[int, int]:
+    #     return int(np.round(self.positions[-1][0])), int(
+    #         np.round(self.positions[-1][0])
+    #     )
 
 
 def detect_particles(
@@ -28,22 +39,24 @@ def detect_particles(
     threshold: float,
     roi: tuple[int, int, int, int],
     minimum_size: int = 10,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
     image_roi = image[roi[2] : roi[3], roi[0] : roi[1]]
 
     thresh = ndi.binary_closing(image_roi > threshold)
     labels, nlabels = ndi.label(thresh)
+
     centers = ndi.center_of_mass(image_roi, labels, index=np.arange(1, nlabels + 1))
-    counts = np.bincount(labels.flat)[1:]
     centers = np.asanyarray(centers)
+    counts = np.bincount(labels.flat)[1:]
+    intensities = ndi.sum_labels(image_roi, labels, index=np.arange(1, nlabels + 1))
 
     valid = counts > minimum_size
     centers = centers[valid]
 
     if centers.size > 0:
         centers += (roi[2], roi[0])
-    return centers
+    return centers, counts[valid], intensities[valid]
 
 
 def interpolate_background(
@@ -172,6 +185,7 @@ def init_parser(parser: argparse.ArgumentParser):
 def main(args: argparse.Namespace):
 
     images = PIL.Image.open(args.video)
+    assert hasattr(images, "n_frames")  # multi page tiff
     frame = 0
 
     if args.show:
@@ -203,7 +217,6 @@ def main(args: argparse.Namespace):
 
     rayleigh_offset = int(np.searchsorted(shifts, 0.0))
 
-    particle_id = 0
     exited_particles = []
     tracked_particles = []
 
@@ -226,20 +239,30 @@ def main(args: argparse.Namespace):
         if offsets is not None:
             image = roll_along_axis(image, offsets, 1)
 
-        for pos in detect_particles(image, args.threshold, args.roi, args.min_size):
-            new = Particle(particle_id, frame, pos)
-            particle_id += 1
-            is_new = True
+        for pos, size, intensity in zip(
+            *detect_particles(image, args.threshold, args.roi, args.min_size)
+        ):
+            new = Particle(frame, pos, size, intensity)
 
-            for old in tracked_particles:
-                if new.distance(old) < args.track_distance:
-                    old.frames.append(frame)
-                    old.positions.append(pos)
-                    is_new = False
-                    break
-
-            if is_new:
+            dists = [new.distance(old) for old in tracked_particles]
+            if len(dists) == 0:
                 tracked_particles.append(new)
+            else:
+                closest = np.argmin(dists)
+                if dists[closest] < args.track_distance:
+                    old = tracked_particles[closest]
+                    if frame != old.frames[-1]:  # not existing
+                        old.frames.append(frame)
+                        old.positions.append(pos)
+                        old.sizes.append(size)
+                        old.intensities.append(intensity)
+                    elif new.intensities[-1] > old.intensities[-1]:
+                        old.frames[-1] = frame
+                        old.positions[-1] = pos
+                        old.sizes[-1] = size
+                        old.intensities[-1] = intensity
+                else:
+                    tracked_particles.append(new)
 
         # remove particles that have exited frame
         for particle in tracked_particles:
@@ -329,7 +352,7 @@ def main(args: argparse.Namespace):
             np.savez_compressed(args.output, particles=data, shifts=shifts)
         else:
             with open(args.output, "w") as fp:
-                fp.write(f"#of2py track v{version('of2py')}")
+                fp.write(f"#of2py track v{version('of2py')}\n")
                 fp.write(
                     f"id,frame,xpos,ypos,{','.join(f'shift_{s:.2f}' for s in shifts)}\n"
                 )
