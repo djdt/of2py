@@ -72,15 +72,16 @@ def detect_particles(
 def interpolate_background(
     image: np.ndarray, positions: list, width: int = 10
 ) -> np.ndarray:
-    def interp_row_nans(x: np.ndarray, mask: np.ndarray):
-        x[~mask] = np.interp(np.flatnonzero(~mask), np.flatnonzero(mask), x[mask])
-        return x
 
     mask = np.ones(image.shape[1], dtype=bool)
     for _, pos in np.around(positions).astype(int):
         mask[pos - width // 2 : pos + width // 2] = False
 
-    return np.apply_along_axis(interp_row_nans, 1, image.astype(float), mask=mask)
+    xp, x = np.flatnonzero(mask), np.flatnonzero(~mask)
+    for row in image:
+        row[~mask] = np.interp(x, xp, row[mask])
+
+    return image
 
 
 def read_spectra(
@@ -238,6 +239,7 @@ def main(args: argparse.Namespace):
         f"{args.video} :: {images.width} x {images.height} :: {images.n_frames} frames :: tracking particles"
     )
 
+    profiler.enable()
     while True:
         try:
             images.seek(frame)
