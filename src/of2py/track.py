@@ -78,10 +78,11 @@ def interpolate_background(
         mask[pos - width // 2 : pos + width // 2] = False
 
     xp, x = np.flatnonzero(mask), np.flatnonzero(~mask)
-    for row in image:
+    out = image.astype(np.float32)
+    for row in out:
         row[~mask] = np.interp(x, xp, row[mask])
 
-    return image
+    return out
 
 
 def read_spectra(
@@ -103,18 +104,11 @@ def read_spectra(
 def roll_along_axis(x: np.ndarray, shifts: np.ndarray, axis: int = 0) -> np.ndarray:
     if shifts.size != x.shape[axis]:
         raise ValueError("shifts must be size of x in rolling axis")
-    if np.any(shifts < 0):
-        raise ValueError("all shifts must be positive")
 
     x = np.swapaxes(x, axis, -1)
-    xx = np.concatenate((x, x), axis=1)
-
-    view = np.lib.stride_tricks.as_strided(
-        xx,
-        shape=(x.shape[0], x.shape[1], x.shape[1]),
-        strides=(xx.strides[0], xx.strides[1], xx.strides[1]),
-    )
-    x = view[np.arange(x.shape[0]), x.shape[1] - shifts - 1]
+    xs = np.arange(x.shape[0])
+    for row in xs:
+        x[row] = np.interp(xs - shifts[row], xs, x[row])
     return np.swapaxes(x, -1, axis)
 
 
@@ -239,7 +233,6 @@ def main(args: argparse.Namespace):
         f"{args.video} :: {images.width} x {images.height} :: {images.n_frames} frames :: tracking particles"
     )
 
-    profiler.enable()
     while True:
         try:
             images.seek(frame)
