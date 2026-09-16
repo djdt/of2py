@@ -1,5 +1,6 @@
 import argparse
 import sys
+from collections.abc import Generator
 from importlib.metadata import version
 from pathlib import Path
 
@@ -11,52 +12,61 @@ import scipy.ndimage as ndi
 class Particle:
     ID_COUNTER = 0
 
-    def __init__(self, frame: int, pos: np.ndarray, size: int, intensity: float):
-        assert pos.size == 2
+    def __init__(self, frame: int, image: np.ndarray, offset: tuple[int, int]):
         self.id = Particle.ID_COUNTER
         Particle.ID_COUNTER += 1
 
-        self.frames = [frame]
-        self.positions = [pos]
-        self.sizes = [size]
-        self.intensities = [intensity]
-        self.spectra = []
+        self.images = {frame: (image, offset)}
+        self.spectra = {}
+
+    def setFrame(self, frame: int, image: np.ndarray, offset: tuple[int, int]):
+        self.images[frame] = (image, offset)
+
+    def lastFrame(self) -> int:
+        return list(self.images)[-1]
 
     def distance(self, other: Particle) -> float:
-        return float(np.linalg.norm(self.positions[-1] - other.positions[-1]))
+        return float(np.linalg.norm(np.asanyarray(self.position()) - other.position()))
 
-    # def position(self) -> tuple[float, float]:
-    #     return self.positions[-1][0], self.positions[-1][1]
-    #
-    # def integerPosition(self) -> tuple[int, int]:
-    #     return int(np.round(self.positions[-1][0])), int(
-    #         np.round(self.positions[-1][0])
-    #     )
+    def intensity(self, frame: int | None = None) -> float:
+        if frame is None:
+            frame = self.lastFrame()
+        return np.sum(self.images[frame][0])
+
+    def position(self, frame: int | None = None) -> tuple[float, float]:
+        if frame is None:
+            frame = self.lastFrame()
+        return np.asanyarray(self.images[frame][1]) + ndi.center_of_mass(
+            self.images[frame][0]
+        )
+
+    def size(self, frame: int | None = None) -> int:
+        if frame is None:
+            frame = self.lastFrame()
+        return int(np.count_nonzero(self.images[frame][0]))
+
+    def fwhm(self, frame: int | None = None) -> int:
+        if frame is None:
+            frame = self.lastFrame()
+        hmax = np.amax(self.images[frame][0]) / 2.0
+        _, c = np.nonzero(self.images[frame][0] < hmax)
+        fwhm = np.amax(np.diff(c) - 1)
+        return fwhm
 
 
 def detect_particles(
-    image: np.ndarray,
-    threshold: float,
-    roi: tuple[int, int, int, int],
-    minimum_size: int = 10,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    image: np.ndarray, threshold: float, roi: tuple[int, int, int, int]
+) -> Generator[tuple[np.ndarray, tuple[int, int]]]:
 
     image_roi = image[roi[2] : roi[3], roi[0] : roi[1]]
 
     thresh = ndi.binary_closing(image_roi > threshold)
-    labels, nlabels = ndi.label(thresh)
-
-    centers = ndi.center_of_mass(image_roi, labels, index=np.arange(1, nlabels + 1))
-    centers = np.asanyarray(centers)
-    counts = np.bincount(labels.flat)[1:]
-    intensities = ndi.sum_labels(image_roi, labels, index=np.arange(1, nlabels + 1))
-
-    valid = counts > minimum_size
-    centers = centers[valid]
-
-    if centers.size > 0:
-        centers += (roi[2], roi[0])
-    return centers, counts[valid], intensities[valid]
+    labels, _ = ndi.label(thresh)
+    slices = ndi.find_objects(labels)
+    for i, (sx, sy) in enumerate(slices):
+        particle = image_roi[sx, sy].copy()
+        particle[labels[sx, sy] != i + 1] = 0.0
+        yield particle, (sx.start + roi[2], sy.start + roi[0])
 
 
 def interpolate_background(
@@ -239,10 +249,10 @@ def main(args: argparse.Namespace):
         if offsets is not None:
             image = roll_along_axis(image, offsets, 1)
 
-        for pos, size, intensity in zip(
-            *detect_particles(image, args.threshold, args.roi, args.min_size)
-        ):
-            new = Particle(frame, pos, size, intensity)
+        for particle_image, offset in detect_particles(image, args.threshold, args.roi):
+            new = Particle(frame, particle_image, offset)
+            if new.size() < args.min_size:
+                continue
 
             dists = [new.distance(old) for old in tracked_particles]
             if len(dists) == 0:
@@ -251,41 +261,35 @@ def main(args: argparse.Namespace):
                 closest = np.argmin(dists)
                 if dists[closest] < args.track_distance:
                     old = tracked_particles[closest]
-                    if frame != old.frames[-1]:  # not existing
-                        old.frames.append(frame)
-                        old.positions.append(pos)
-                        old.sizes.append(size)
-                        old.intensities.append(intensity)
-                    elif new.intensities[-1] > old.intensities[-1]:
-                        old.frames[-1] = frame
-                        old.positions[-1] = pos
-                        old.sizes[-1] = size
-                        old.intensities[-1] = intensity
+                    if frame != old.lastFrame() or new.intensity() > old.intensity():
+                        old.setFrame(frame, particle_image, offset)
                 else:
                     tracked_particles.append(new)
 
         # remove particles that have exited frame
         for particle in tracked_particles:
-            if frame - particle.frames[-1] > args.track_frames:
+            if frame - particle.lastFrame() > args.track_frames:
                 exited_particles.append(particle)
                 tracked_particles.remove(particle)
 
         # mask out all particles and interpolate the background over them
         background = interpolate_background(
             image,
-            [particle.positions[-1] for particle in tracked_particles],
+            [particle.position() for particle in tracked_particles],
             width=args.background_width,
         )
         # extract spectra
-        for particle in tracked_particles[:]:
+        for particle in tracked_particles:
             spectra = read_spectra(
                 image,
-                particle.positions[-1],
+                particle.position(),
                 background,
+                # particle.fwhm(),
                 args.spectra_width,
                 rayleigh_offset,
             )
-            particle.spectra.append(spectra)
+            # may be a frame where particle is not tracked, thats ok
+            particle.spectra[frame] = spectra
 
         if args.show or args.record is not None:
             x = np.clip(image, 0.0, np.percentile(image, 90))
@@ -296,8 +300,8 @@ def main(args: argparse.Namespace):
             missing_color = (255, 0, 0)
 
             for particle in tracked_particles:
-                current = particle.frames[-1] == frame
-                pos = particle.positions[-1]
+                current = particle.lastFrame() == frame
+                pos = particle.position()
                 p0 = (int(pos[1]) - 5, int(pos[0]) - 5)
                 p1 = (int(pos[1]) + 5, int(pos[0]) + 5)
                 cv2.rectangle(x, p0, p1, color if current else missing_color, 3)
@@ -331,7 +335,7 @@ def main(args: argparse.Namespace):
 
     if args.output is not None:
         if args.output.suffix == ".npz":
-            size = np.sum([len(p.frames) for p in exited_particles])
+            size = np.sum([len(p.images) for p in exited_particles])
             data = np.empty(
                 size,
                 dtype=[
@@ -344,9 +348,9 @@ def main(args: argparse.Namespace):
             )
             i = 0
             for particle in exited_particles:
-                for frame, pos, spectra in zip(
-                    particle.frames, particle.positions, particle.spectra
-                ):
+                for frame in particle.images:
+                    pos = particle.position(frame)
+                    spectra = particle.spectra[frame]
                     data[i] = (particle.id, frame, pos[1], pos[0], spectra)
                     i += 1
             np.savez_compressed(args.output, particles=data, shifts=shifts)
@@ -357,9 +361,9 @@ def main(args: argparse.Namespace):
                     f"id,frame,xpos,ypos,{','.join(f'shift_{s:.2f}' for s in shifts)}\n"
                 )
                 for particle in exited_particles:
-                    for frame, pos, spectra in zip(
-                        particle.frames, particle.positions, particle.spectra
-                    ):
+                    for frame in particle.images:
+                        pos = particle.position(frame)
+                        spectra = particle.spectra[frame]
                         fp.write(
                             f"{particle.id},{frame},{pos[1]:.2f},{pos[0]:.2f},{','.join(f'{s:.6g}' for s in spectra)}\n"
                         )
