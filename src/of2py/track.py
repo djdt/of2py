@@ -36,7 +36,7 @@ class Particle:
     def position(self, frame: int | None = None) -> tuple[float, float]:
         if frame is None:
             frame = self.lastFrame()
-        return np.asanyarray(self.images[frame][1]) + ndi.center_of_mass(
+        return np.asanyarray(self.images[frame][1]) + ndi.maximum_position(
             self.images[frame][0]
         )
 
@@ -90,14 +90,40 @@ def read_spectra(
     pos: np.ndarray,
     background: np.ndarray,
     width: int = 3,
-    rayleigh_offset: int = 0,
+    rayleigh_offset: float = 0.0,
 ) -> np.ndarray:
     py, px = np.around(pos).astype(int)
-    spectra = np.mean(image[:, px - width // 2 : px + width // 2 + 1], axis=1)
-    spectra_bg = np.mean(background[:, px - width // 2 : px + width // 2 + 1], axis=1)
+    spectra = np.mean(
+        image[:, px - width // 2 : px + width // 2 + 1]
+        - background[:, px - width // 2 : px + width // 2 + 1],
+        axis=1,
+    )
 
     shift = image.shape[1] - py
-    spectra = np.roll(spectra - spectra_bg, shift - rayleigh_offset, axis=0)
+    spectra = np.roll(spectra, shift - int(rayleigh_offset), axis=0)
+    return spectra[::-1]
+
+
+def read_spectra_subpixel(
+    image: np.ndarray,
+    pos: np.ndarray,
+    background: np.ndarray,
+    width: int = 3,
+    rayleigh_offset: float = 0.0,
+) -> np.ndarray:
+    px = int(np.around(pos[1]))
+    spectra = np.mean(
+        image[:, px - width // 2 : px + width // 2 + 1]
+        - background[:, px - width // 2 : px + width // 2 + 1],
+        axis=1,
+    )
+
+    xs = np.arange(int(pos[0]) - 2, int(pos[0]) + 3)
+    poly = np.polynomial.Polynomial.fit(xs, spectra[xs], 2)
+    subpixel_offset = spectra.size - poly.deriv(1).roots() - 1
+
+    x = np.arange(spectra.size)
+    spectra = np.interp(x, x - rayleigh_offset + subpixel_offset, spectra)
     return spectra[::-1]
 
 
@@ -220,7 +246,7 @@ def main(args: argparse.Namespace):
     else:
         shifts = np.arange(images.height)
 
-    rayleigh_offset = int(np.searchsorted(shifts, 0.0))
+    rayleigh_offset = np.interp(0.0, shifts, np.arange(shifts.size))
 
     exited_particles = []
     tracked_particles = []
@@ -275,15 +301,24 @@ def main(args: argparse.Namespace):
         )
         # extract spectra
         for particle in tracked_particles:
-            spectra = read_spectra(
+            if particle.lastFrame() != frame:  # no particle = no spectra
+                continue
+
+            spectra = read_spectra_subpixel(
                 image,
                 particle.position(),
                 background,
-                # particle.fwhm(),
                 args.spectra_width,
                 rayleigh_offset,
             )
-            # may be a frame where particle is not tracked, thats ok
+            # spectra = read_spectra(
+            #     image,
+            #     particle.position(),
+            #     background,
+            #     # particle.fwhm(),
+            #     args.spectra_width,
+            #     rayleigh_offset,
+            # )
             particle.spectra[frame] = spectra
 
         if args.show or args.record is not None:
