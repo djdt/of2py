@@ -348,13 +348,13 @@ def main(args: argparse.Namespace):
         else:
             axes = [plt.gca()] * spectra.shape[0]
 
-        for ax, spectrum in zip(axes, spectra):
+        for ax, id, spectrum in zip(axes, data["id"], spectra):
             if args.smooth:
                 spectrum = gaussian_filter1d(spectrum, sigma=args.smooth)
             if args.normalise:
                 spectrum /= spectrum.max()
 
-            ax.plot(shifts, spectrum, label=f"{file.stem}")
+            ax.plot(shifts, spectrum, label=f"{file.stem} :: {id}")
             if stddev is not None:
                 ax.fill_between(shifts, spectrum - stddev, spectrum + stddev, alpha=0.5)
 
