@@ -348,13 +348,20 @@ def main(args: argparse.Namespace):
         else:
             axes = [plt.gca()] * spectra.shape[0]
 
+        min_raman, max_raman = 0.0, 0.0
         for ax, id, spectrum in zip(axes, data["id"], spectra):
             if args.smooth:
                 spectrum = gaussian_filter1d(spectrum, sigma=args.smooth)
             if args.normalise:
-                spectrum /= spectrum.max()
+                spectrum /= np.amax(spectrum)
 
             ax.plot(shifts, spectrum, label=f"{file.stem} :: {id}")
+            min_raman = min(
+                min_raman, np.amin(spectrum[np.searchsorted(shifts, 100) :])
+            )
+            max_raman = max(
+                max_raman, np.amax(spectrum[np.searchsorted(shifts, 100) :])
+            )
             if stddev is not None:
                 ax.fill_between(shifts, spectrum - stddev, spectrum + stddev, alpha=0.5)
 
@@ -364,6 +371,8 @@ def main(args: argparse.Namespace):
 
     if args.legend:
         plt.legend()
+
+    plt.ylim(min_raman * 1.05, max_raman * 1.05)
 
     plt.tight_layout()
     plt.show()
