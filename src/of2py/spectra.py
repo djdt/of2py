@@ -210,6 +210,7 @@ def init_parser(parser: argparse.ArgumentParser):
     parser.add_argument(
         "files", type=Path, nargs="+", help="CSV / NPZ output(s) from of2py or BRAVE"
     )
+    parser.add_argument("-o", "--output", type=Path, help="save image to file")
     # input
     parser.add_argument(
         "--mode",
@@ -293,11 +294,6 @@ def main(args: argparse.Namespace):
                 file_type = "of2py"
                 shifts, data = read_of2py_csv(file)
 
-        if args.single and file_type not in ["of2py", "brave_single"]:
-            raise TypeError(
-                "--single can only be used with a BRAVE single_spectra.csv or 'of2py track' file"
-            )
-
         if args.id is not None:
             data = data[data["id"] == args.id]
 
@@ -318,7 +314,12 @@ def main(args: argparse.Namespace):
                 np.logical_and(data["xpos"] > args.pos[0], data["xpos"] < args.pos[1])
             ]
 
-        if not args.single:
+        if args.single:
+            if file_type not in ["of2py", "brave_single"]:
+                raise TypeError(
+                    "--single can only be used with a BRAVE single_spectra.csv or 'of2py track' file"
+                )
+        else:
             data = reduce_raman_single_spectra(data)
 
         # must be accessed after reduction
@@ -353,7 +354,7 @@ def main(args: argparse.Namespace):
             if args.smooth:
                 spectrum = gaussian_filter1d(spectrum, sigma=args.smooth)
             if args.normalise:
-                spectrum /= np.amax(spectrum)
+                spectrum /= np.amax(spectrum[np.searchsorted(shifts, 100) :])
 
             ax.plot(shifts, spectrum, label=f"{file.stem} :: {id}")
             min_raman = min(
@@ -373,6 +374,8 @@ def main(args: argparse.Namespace):
         plt.legend()
 
     plt.ylim(min_raman * 1.05, max_raman * 1.05)
-
     plt.tight_layout()
-    plt.show()
+    if args.output is None:
+        plt.show()
+    else:
+        plt.savefig(args.output)
