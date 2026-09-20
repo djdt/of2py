@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.ndimage import gaussian_filter1d
+from scipy.signal import savgol_filter
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +252,14 @@ def init_parser(parser: argparse.ArgumentParser):
         nargs="?",
         help="smooth spectra with Gaussian",
     )
+    parser.add_argument(
+        "--savgol",
+        type=int,
+        const=9,
+        metavar="WINDOW",
+        nargs="?",
+        help="smooth spectra with Savitzsky Golay",
+    )
     # arithmetic
     parser.add_argument("--sum", action="store_true", help="sum all spectra")
     parser.add_argument(
@@ -353,6 +362,8 @@ def main(args: argparse.Namespace):
         for ax, id, spectrum in zip(axes, data["id"], spectra):
             if args.smooth:
                 spectrum = gaussian_filter1d(spectrum, sigma=args.smooth)
+            if args.savgol:
+                spectrum = savgol_filter(spectrum, args.savgol, 3)
             if args.normalise:
                 spectrum /= np.amax(spectrum[np.searchsorted(shifts, 100) :])
 
