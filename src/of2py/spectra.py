@@ -317,6 +317,7 @@ def init_parser(parser: argparse.ArgumentParser):
 
 
 def main(args: argparse.Namespace):
+    min_raman, max_raman = 0.0, 0.0
     for file in args.files:
         assert isinstance(file, Path)
         if file.suffix == ".npz":
@@ -359,8 +360,8 @@ def main(args: argparse.Namespace):
                 raise TypeError(
                     "--single can only be used with a BRAVE single_spectra.csv or 'of2py track' file"
                 )
-            else:
-                data = reduce_raman_single_spectra(data)
+        elif file_type != "brave":
+            data = reduce_raman_single_spectra(data)
 
         # must be accessed after reduction
         if args.frames is not None:
@@ -371,6 +372,11 @@ def main(args: argparse.Namespace):
             continue
 
         spectra = data["spectra"]
+
+        if args.smooth:
+            spectra = gaussian_filter1d(spectra, sigma=args.smooth, axis=1)
+        if args.savgol:
+            spectra = savgol_filter(spectra, args.savgol, 3, axis=1)
 
         if args.normalise:
             rayleigh_peaks = np.amax(
@@ -395,13 +401,7 @@ def main(args: argparse.Namespace):
         else:
             axes = [plt.gca()] * spectra.shape[0]
 
-        min_raman, max_raman = 0.0, 0.0
         for ax, id, spectrum in zip(axes, data["id"], spectra):
-            if args.smooth:
-                spectrum = gaussian_filter1d(spectrum, sigma=args.smooth)
-            if args.savgol:
-                spectrum = savgol_filter(spectrum, args.savgol, 3)
-
             ax.plot(shifts, spectrum, label=f"{file.stem} :: {id}")
             min_raman = min(
                 min_raman, np.amin(spectrum[np.searchsorted(shifts, 100) :])
@@ -419,8 +419,9 @@ def main(args: argparse.Namespace):
     if args.legend:
         plt.legend()
 
-    plt.ylim(min_raman * 1.05, max_raman * 1.05)
+    plt.ylim(min_raman * 1.2, max_raman * 1.2)
     plt.tight_layout()
+
     if args.output is None:
         plt.show()
     else:
