@@ -359,8 +359,8 @@ def main(args: argparse.Namespace):
                 raise TypeError(
                     "--single can only be used with a BRAVE single_spectra.csv or 'of2py track' file"
                 )
-        else:
-            data = reduce_raman_single_spectra(data)
+            else:
+                data = reduce_raman_single_spectra(data)
 
         # must be accessed after reduction
         if args.frames is not None:
@@ -370,17 +370,23 @@ def main(args: argparse.Namespace):
             logger.warning(f"all spectra filtered for {file}")
             continue
 
+        spectra = data["spectra"]
+        if args.smooth:
+            gaussian_filter1d(spectra, sigma=args.smooth, output=spectra, axis=1)
+        if args.savgol:
+            spectra = savgol_filter(spectra, args.savgol, 3, axis=1)
+        if args.normalise:
+            rayleigh_peaks = np.amax(spectra[: np.searchsorted(shifts, 100.0)], axis=1)
+            np.divide(spectra, rayleigh_peaks[:, None], out=spectra)
+
         stddev = None
         if args.sum:
             spectra = np.sum(data["spectra"], axis=0)
         elif args.mean:
             spectra = np.mean(data["spectra"], axis=0)
             stddev = np.std(data["spectra"], mean=spectra, axis=0)
-        else:
-            spectra = data["spectra"]
 
         spectra = np.atleast_2d(spectra)
-
         if args.stack:
             _, axes = plt.subplots(
                 spectra.shape[0], 1, squeeze=False, sharex=True, sharey=True
@@ -391,13 +397,6 @@ def main(args: argparse.Namespace):
 
         min_raman, max_raman = 0.0, 0.0
         for ax, id, spectrum in zip(axes, data["id"], spectra):
-            if args.smooth:
-                spectrum = gaussian_filter1d(spectrum, sigma=args.smooth)
-            if args.savgol:
-                spectrum = savgol_filter(spectrum, args.savgol, 3)
-            if args.normalise:
-                spectrum /= np.amax(spectrum[np.searchsorted(shifts, 100) :])
-
             ax.plot(shifts, spectrum, label=f"{file.stem} :: {id}")
             min_raman = min(
                 min_raman, np.amin(spectrum[np.searchsorted(shifts, 100) :])
