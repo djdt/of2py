@@ -11,7 +11,9 @@ from scipy.signal import savgol_filter
 logger = logging.getLogger(__name__)
 
 
-def read_of2py_csv(file: str | Path) -> tuple[np.ndarray, np.ndarray]:
+def read_of2py_csv(
+    file: str | Path, mode: str = "subtracted"
+) -> tuple[np.ndarray, np.ndarray]:
     with open(file, "r") as fp:
         while header := fp.readline():
             if not header.startswith("#"):
@@ -20,23 +22,52 @@ def read_of2py_csv(file: str | Path) -> tuple[np.ndarray, np.ndarray]:
         if len(shift_header) != 2304:
             raise ValueError(f"expected length 2304, not {len(shift_header)}")
         shifts = np.fromiter((s[6:] for s in shift_header), dtype=float)
-        x = np.loadtxt(
+        data = np.loadtxt(
             fp,
             delimiter=",",
             dtype=[
                 ("id", int),
+                ("type", "U1"),
                 ("frame", int),
                 ("xpos", float),
                 ("ypos", float),
                 ("spectra", float, 2304),
             ],
         )
-    return shifts, x
+
+    x = data[data["type"] == "S"]
+    y = data[data["type"] == "B"]
+    if mode == "subtracted":
+        data = x
+    elif mode == "background":
+        data = y
+    elif mode == "raw":
+        x["spectra"] += y["spectra"]
+        data = x
+    else:
+        raise ValueError("mode must be one of 'subtracted', 'background', 'raw'")
+    return shifts, data
 
 
-def read_of2py_npz(file: str | Path) -> tuple[np.ndarray, np.ndarray]:
+def read_of2py_npz(
+    file: str | Path, mode: str = "subtracted"
+) -> tuple[np.ndarray, np.ndarray]:
     npz = np.load(file)
-    return npz["shifts"], npz["particles"]
+    data = npz["particles"]
+
+    x = data[data["type"] == "S"]
+    y = data[data["type"] == "B"]
+    if mode == "subtracted":
+        data = x
+    elif mode == "background":
+        data = y
+    elif mode == "raw":
+        x["spectra"] += y["spectra"]
+        data = x
+    else:
+        raise ValueError("mode must be one of 'subtracted', 'background', 'raw'")
+
+    return npz["shifts"], data
 
 
 def read_raman_spectra(path: Path) -> tuple[np.ndarray, np.ndarray]:
@@ -92,8 +123,6 @@ def read_raman_single_spectra(
     Returns:
         array of shifts (/cm), structured array of single spectra
     """
-    if mode not in ["raw", "subtracted", "background"]:
-        raise ValueError("mode must be one of 'raw', 'subtracted', 'background'")
     dtype = [
         ("id", int),
         ("frame", int),
@@ -121,8 +150,10 @@ def read_raman_single_spectra(
         spectra = x["spectra"] + y["spectra"]
     elif mode == "subtracted":
         spectra = x["spectra"]
-    else:  # mode == "background"
+    elif mode == "background":
         spectra = y["spectra"]
+    else:
+        raise ValueError("mode must be one of 'subtracted', 'background', 'raw'")
 
     x["spectra"] = spectra
 
@@ -217,7 +248,7 @@ def init_parser(parser: argparse.ArgumentParser):
         "--mode",
         default="subtracted",
         choices=("raw", "subtracted", "background"),
-        help="type of spectra to load from a single_spectra.csv",
+        help="type of spectra to load from a single_spectra.csv or of2py track file",
     )
     # filtering
     parser.add_argument(
@@ -290,7 +321,7 @@ def main(args: argparse.Namespace):
         assert isinstance(file, Path)
         if file.suffix == ".npz":
             file_type = "of2py"
-            shifts, data = read_of2py_npz(file)
+            shifts, data = read_of2py_npz(file, mode=args.mode)
         elif file.suffix.lower() == ".csv":
             header = file.open("r").readline()
             if "singleSpectraCount" in header:  # is raman_spectra format
@@ -301,7 +332,7 @@ def main(args: argparse.Namespace):
                 shifts, data = read_raman_single_spectra(file, mode=args.mode)
             else:  # assume of2py
                 file_type = "of2py"
-                shifts, data = read_of2py_csv(file)
+                shifts, data = read_of2py_csv(file, mode=args.mode)
 
         if args.id is not None:
             data = data[data["id"] == args.id]

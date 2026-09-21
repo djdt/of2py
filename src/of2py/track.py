@@ -85,38 +85,16 @@ def interpolate_background(
     return out
 
 
-def read_spectra(
-    image: np.ndarray,
-    pos: np.ndarray,
-    background: np.ndarray,
-    width: int = 3,
-    rayleigh_offset: float = 0.0,
-) -> np.ndarray:
-    py, px = np.around(pos).astype(int)
-    spectra = np.mean(
-        image[:, px - width // 2 : px + width // 2 + 1]
-        - background[:, px - width // 2 : px + width // 2 + 1],
-        axis=1,
-    )
-
-    shift = image.shape[1] - py
-    spectra = np.roll(spectra, shift - int(rayleigh_offset), axis=0)
-    return spectra[::-1]
-
-
 def read_spectra_subpixel(
     image: np.ndarray,
     pos: np.ndarray,
     background: np.ndarray,
     width: int = 3,
     rayleigh_offset: float = 0.0,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     px = int(np.around(pos[1]))
-    spectra = np.mean(
-        image[:, px - width // 2 : px + width // 2 + 1]
-        - background[:, px - width // 2 : px + width // 2 + 1],
-        axis=1,
-    )
+    spectra = np.mean(image[:, px - width // 2 : px + width // 2 + 1], axis=1)
+    spectra_bg = np.mean(background[:, px - width // 2 : px + width // 2 + 1], axis=1)
 
     xs = np.arange(int(pos[0]) - 2, int(pos[0]) + 3)
     poly = np.polynomial.Polynomial.fit(xs, spectra[xs], 2)
@@ -124,7 +102,8 @@ def read_spectra_subpixel(
 
     x = np.arange(spectra.size)
     spectra = np.interp(x, x - rayleigh_offset + subpixel_offset, spectra)
-    return spectra[::-1]
+    spectra_bg = np.interp(x, x - rayleigh_offset + subpixel_offset, spectra_bg)
+    return spectra[::-1] - spectra_bg[::-1], spectra_bg[::-1]
 
 
 def roll_along_axis(x: np.ndarray, shifts: np.ndarray, axis: int = 0) -> np.ndarray:
@@ -304,22 +283,14 @@ def main(args: argparse.Namespace):
             if particle.lastFrame() != frame:  # no particle = no spectra
                 continue
 
-            spectra = read_spectra_subpixel(
+            spectra, spectra_bg = read_spectra_subpixel(
                 image,
                 particle.position(),
                 background,
                 args.spectra_width,
                 rayleigh_offset,
             )
-            # spectra = read_spectra(
-            #     image,
-            #     particle.position(),
-            #     background,
-            #     # particle.fwhm(),
-            #     args.spectra_width,
-            #     rayleigh_offset,
-            # )
-            particle.spectra[frame] = spectra
+            particle.spectra[frame] = (spectra, spectra_bg)
 
         if args.show or args.record is not None:
             x = np.clip(image, 0.0, np.percentile(image, 90))
@@ -365,11 +336,12 @@ def main(args: argparse.Namespace):
 
     if args.output is not None:
         if args.output.suffix == ".npz":
-            size = np.sum([len(p.images) for p in exited_particles])
+            size = np.sum([len(p.images) for p in exited_particles]) * 2
             data = np.empty(
                 size,
                 dtype=[
                     ("id", int),
+                    ("type", "U1"),
                     ("frame", int),
                     ("xpos", float),
                     ("ypos", float),
@@ -380,20 +352,24 @@ def main(args: argparse.Namespace):
             for particle in exited_particles:
                 for frame in particle.images:
                     pos = particle.position(frame)
-                    spectra = particle.spectra[frame]
-                    data[i] = (particle.id, frame, pos[1], pos[0], spectra)
-                    i += 1
+                    spectra, spectra_bg = particle.spectra[frame]
+                    data[i] = (particle.id, "S", frame, pos[1], pos[0], spectra)
+                    data[i + 1] = (particle.id, "B", frame, pos[1], pos[0], spectra_bg)
+                    i += 2
             np.savez_compressed(args.output, particles=data, shifts=shifts)
         else:
             with open(args.output, "w") as fp:
                 fp.write(f"#of2py track v{version('of2py')}\n")
                 fp.write(
-                    f"id,frame,xpos,ypos,{','.join(f'shift_{s:.2f}' for s in shifts)}\n"
+                    f"id,type,frame,xpos,ypos,{','.join(f'shift_{s:.2f}' for s in shifts)}\n"
                 )
                 for particle in exited_particles:
                     for frame in particle.images:
                         pos = particle.position(frame)
-                        spectra = particle.spectra[frame]
+                        spectra, spectra_bg = particle.spectra[frame]
                         fp.write(
-                            f"{particle.id},{frame},{pos[1]:.2f},{pos[0]:.2f},{','.join(f'{s:.6g}' for s in spectra)}\n"
+                            f"{particle.id},S,{frame},{pos[1]:.2f},{pos[0]:.2f},{','.join(f'{s:.6g}' for s in spectra)}\n"
+                        )
+                        fp.write(
+                            f"{particle.id},B,{frame},{pos[1]:.2f},{pos[0]:.2f},{','.join(f'{s:.6g}' for s in spectra_bg)}\n"
                         )
