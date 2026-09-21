@@ -294,7 +294,7 @@ def init_parser(parser: argparse.ArgumentParser):
     # arithmetic
     parser.add_argument("--sum", action="store_true", help="sum all spectra")
     parser.add_argument(
-        "--mean", action="store_true", help="show a single mean spectra with stddev"
+        "--mean", action="store_true", help="show a single mean spectra with SEM"
     )
     # display
     parser.add_argument(
@@ -371,20 +371,20 @@ def main(args: argparse.Namespace):
             continue
 
         spectra = data["spectra"]
-        if args.smooth:
-            gaussian_filter1d(spectra, sigma=args.smooth, output=spectra, axis=1)
-        if args.savgol:
-            spectra = savgol_filter(spectra, args.savgol, 3, axis=1)
+
         if args.normalise:
-            rayleigh_peaks = np.amax(spectra[: np.searchsorted(shifts, 100.0)], axis=1)
+            rayleigh_peaks = np.amax(
+                spectra[:, : np.searchsorted(shifts, 100.0)], axis=1
+            )
             np.divide(spectra, rayleigh_peaks[:, None], out=spectra)
 
-        stddev = None
+        sem = None
         if args.sum:
-            spectra = np.sum(data["spectra"], axis=0)
+            spectra = np.sum(spectra, axis=0)
         elif args.mean:
-            spectra = np.mean(data["spectra"], axis=0)
-            stddev = np.std(data["spectra"], mean=spectra, axis=0)
+            mean = np.mean(spectra, axis=0)
+            sem = np.std(spectra, mean=mean, axis=0) / np.sqrt(spectra.shape[0])
+            spectra = mean
 
         spectra = np.atleast_2d(spectra)
         if args.stack:
@@ -397,6 +397,11 @@ def main(args: argparse.Namespace):
 
         min_raman, max_raman = 0.0, 0.0
         for ax, id, spectrum in zip(axes, data["id"], spectra):
+            if args.smooth:
+                spectrum = gaussian_filter1d(spectrum, sigma=args.smooth)
+            if args.savgol:
+                spectrum = savgol_filter(spectrum, args.savgol, 3)
+
             ax.plot(shifts, spectrum, label=f"{file.stem} :: {id}")
             min_raman = min(
                 min_raman, np.amin(spectrum[np.searchsorted(shifts, 100) :])
@@ -404,8 +409,8 @@ def main(args: argparse.Namespace):
             max_raman = max(
                 max_raman, np.amax(spectrum[np.searchsorted(shifts, 100) :])
             )
-            if stddev is not None:
-                ax.fill_between(shifts, spectrum - stddev, spectrum + stddev, alpha=0.5)
+            if sem is not None:
+                ax.fill_between(shifts, spectrum - sem, spectrum + sem, alpha=0.5)
 
             if args.label is not None:
                 peaks = np.searchsorted(shifts, args.label)
