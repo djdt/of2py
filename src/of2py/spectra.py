@@ -285,11 +285,11 @@ def init_parser(parser: argparse.ArgumentParser):
     )
     parser.add_argument(
         "--savgol",
-        type=int,
-        const=9,
-        metavar="WINDOW",
+        type=float,
+        const=3.5,
+        metavar="W/P",
         nargs="?",
-        help="smooth spectra with Savitzsky Golay",
+        help="smooth spectra with 3rd degree Savitzsky Golay",
     )
     # arithmetic
     parser.add_argument("--sum", action="store_true", help="sum all spectra")
@@ -373,10 +373,10 @@ def main(args: argparse.Namespace):
 
         spectra = data["spectra"]
 
+        if args.savgol:
+            spectra = savgol_filter(spectra, int(args.savgol * 3) + 1, 3, axis=1)
         if args.smooth:
             spectra = gaussian_filter1d(spectra, sigma=args.smooth, axis=1)
-        if args.savgol:
-            spectra = savgol_filter(spectra, args.savgol, 3, axis=1)
 
         if args.normalise:
             rayleigh_peaks = np.amax(
