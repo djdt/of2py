@@ -372,7 +372,7 @@ def main(args: argparse.Namespace):
 
         # must be accessed after reduction
         if args.frames is not None:
-            data = data[data["frames"] > args.frames]
+            data = data[data["frames"] >= args.frames]
 
         if data.size == 0:
             logger.warning(f"all spectra filtered for {file}")
