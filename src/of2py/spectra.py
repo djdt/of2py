@@ -18,10 +18,12 @@ def read_of2py_csv(
         while header := fp.readline():
             if not header.startswith("#"):
                 break
-        shift_header = header.split(",")[4:]
+        shift_header = header.split(",")[5:]
         if len(shift_header) != 2304:
             raise ValueError(f"expected length 2304, not {len(shift_header)}")
-        shifts = np.fromiter((s[6:] for s in shift_header), dtype=float)
+        shifts = np.fromiter(
+            (s[s.find("[") + 1 : -2] for s in shift_header), dtype=float
+        )
         data = np.loadtxt(
             fp,
             delimiter=",",

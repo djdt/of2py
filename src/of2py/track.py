@@ -1,7 +1,6 @@
 import argparse
 import sys
 from collections.abc import Generator
-from importlib.metadata import version
 from pathlib import Path
 
 import numpy as np
@@ -52,6 +51,9 @@ class Particle:
         _, c = np.nonzero(self.images[frame][0] < hmax)
         fwhm = np.amax(np.diff(c) - 1)
         return fwhm
+
+    def meanSpectra(self) -> np.ndarray:
+        return np.mean(np.stack([x[0] for x in self.spectra.values()], axis=0), axis=0)
 
 
 def detect_particles(
@@ -341,10 +343,10 @@ def main(args: argparse.Namespace):
                 size,
                 dtype=[
                     ("id", int),
-                    ("type", "U1"),
+                    ("datatype", "U1"),
                     ("frame", int),
-                    ("xpos", float),
-                    ("ypos", float),
+                    ("positionx", float),
+                    ("positiony", float),
                     ("spectra", float, 2304),
                 ],
             )
@@ -358,18 +360,28 @@ def main(args: argparse.Namespace):
                     i += 2
             np.savez_compressed(args.output, particles=data, shifts=shifts)
         else:
-            with open(args.output, "w") as fp:
-                fp.write(f"#of2py track v{version('of2py')}\n")
+            with (
+                open(args.output, "w") as fp,
+                open(
+                    args.output.with_stem(args.output.stem + "_single"), mode="w"
+                ) as fp_single,
+            ):
                 fp.write(
-                    f"id,type,frame,xpos,ypos,{','.join(f'shift_{s:.2f}' for s in shifts)}\n"
+                    f"id,framecount,{','.join(f'Shift_{i}[{s:.2f}]' for i, s in enumerate(shifts))}\n"
+                )
+                fp_single.write(
+                    f"id,datatype,frame,positionx,positiony,{','.join(f'Shift_{i}[{s:.2f}]' for i, s in enumerate(shifts))}\n"
                 )
                 for particle in exited_particles:
+                    fp.write(
+                        f"{particle.id},{len(particle.spectra)},{','.join(f'{s:.6g}' for s in particle.meanSpectra())}\n"
+                    )
                     for frame in particle.images:
                         pos = particle.position(frame)
                         spectra, spectra_bg = particle.spectra[frame]
-                        fp.write(
+                        fp_single.write(
                             f"{particle.id},S,{frame},{pos[1]:.2f},{pos[0]:.2f},{','.join(f'{s:.6g}' for s in spectra)}\n"
                         )
-                        fp.write(
+                        fp_single.write(
                             f"{particle.id},B,{frame},{pos[1]:.2f},{pos[0]:.2f},{','.join(f'{s:.6g}' for s in spectra_bg)}\n"
                         )
