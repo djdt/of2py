@@ -100,7 +100,7 @@ def read_raman_spectra(path: Path) -> tuple[np.ndarray, np.ndarray]:
         if len(shift_header) != 2304:
             raise ValueError(f"expected length 2304, not {len(shift_header)}")
         shifts = np.array(
-            [float(s[s.find("[") + 1 : s.rfind("]")]) for s in shift_header]
+            [float(s[s.find("[") + 1 : s.find("]")]) for s in shift_header]
         )
 
         return shifts, np.loadtxt(
@@ -216,6 +216,11 @@ def label_peaks(ax, xs: np.ndarray, ys: np.ndarray, peaks: np.ndarray):
 def velocity_from_positions(
     positions: np.ndarray, frames: np.ndarray, fps: float = 20.0
 ) -> float:
+    """Get the veloxity from the x positions of a particle.
+
+    A cubic spline is fit around the central velocity and used to interpolate
+    the maximum.
+    """
     win = 3
     if frames.size < 2:
         return 0.0
