@@ -352,6 +352,7 @@ def main(args: argparse.Namespace):
                     ("background", float, 2304),
                 ],
             )
+            i = 0
             for particle in exited_particles:
                 for frame in particle.images:
                     pos = particle.position(frame)
