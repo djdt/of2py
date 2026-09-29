@@ -59,7 +59,7 @@ def read_of2py_npz(
 
     if mode == "subtracted":
         pass
-    if mode == "background":
+    elif mode == "background":
         data["spectra"] = data["background"]
     elif mode == "raw":
         data["spectra"] += data["background"]
@@ -179,6 +179,7 @@ def reduce_raman_single_spectra(x: np.ndarray) -> np.ndarray:
         ("confidence", float),
         ("velocity", float),
         ("spectra", float, 2304),
+        ("spectra_std", float, 2304),
     ]
     reduced = np.empty(len(ids), dtype=reduced_dtype)
     for i, (id, count) in enumerate(zip(ids, counts)):
@@ -193,7 +194,10 @@ def reduce_raman_single_spectra(x: np.ndarray) -> np.ndarray:
         reduced[i]["velocity"] = velocity_from_positions(
             x[x["id"] == id]["xpos"], x[x["id"] == id]["frame"]
         )
-        reduced[i]["spectra"] = np.sum(x[x["id"] == id]["spectra"], axis=0)
+        reduced[i]["spectra"] = np.mean(x[x["id"] == id]["spectra"], axis=0)
+        reduced[i]["spectra_std"] = np.std(
+            x[x["id"] == id]["spectra"], mean=reduced[i]["spectra"], axis=0
+        )
 
     return reduced
 
