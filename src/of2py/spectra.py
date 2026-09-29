@@ -57,15 +57,12 @@ def read_of2py_npz(
     npz = np.load(file)
     data = npz["particles"]
 
-    x = data[data["type"] == "S"]
-    y = data[data["type"] == "B"]
     if mode == "subtracted":
-        data = x
-    elif mode == "background":
-        data = y
+        pass
+    if mode == "background":
+        data["spectra"] = data["background"]
     elif mode == "raw":
-        x["spectra"] += y["spectra"]
-        data = x
+        data["spectra"] += data["background"]
     else:
         raise ValueError("mode must be one of 'subtracted', 'background', 'raw'")
 

@@ -338,26 +338,24 @@ def main(args: argparse.Namespace):
 
     if args.output is not None:
         if args.output.suffix == ".npz":
-            size = np.sum([len(p.images) for p in exited_particles]) * 2
+            size = np.sum([len(p.images) for p in exited_particles])
             data = np.empty(
                 size,
                 dtype=[
                     ("id", int),
-                    ("type", "U1"),
                     ("frame", int),
                     ("xpos", float),
                     ("ypos", float),
                     ("spectra", float, 2304),
+                    ("background", float, 2304),
                 ],
             )
-            i = 0
             for particle in exited_particles:
                 for frame in particle.images:
                     pos = particle.position(frame)
                     spectra, spectra_bg = particle.spectra[frame]
-                    data[i] = (particle.id, "S", frame, pos[1], pos[0], spectra)
-                    data[i + 1] = (particle.id, "B", frame, pos[1], pos[0], spectra_bg)
-                    i += 2
+                    data[i] = (particle.id, frame, pos[1], pos[0], spectra, spectra_bg)
+                    i += 1
             np.savez_compressed(args.output, particles=data, shifts=shifts)
         else:
             with (
