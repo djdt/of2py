@@ -343,10 +343,10 @@ def main(args: argparse.Namespace):
                 size,
                 dtype=[
                     ("id", int),
-                    ("datatype", "U1"),
+                    ("type", "U1"),
                     ("frame", int),
-                    ("positionx", float),
-                    ("positiony", float),
+                    ("xpos", float),
+                    ("ypos", float),
                     ("spectra", float, 2304),
                 ],
             )
@@ -362,26 +362,17 @@ def main(args: argparse.Namespace):
         else:
             with (
                 open(args.output, "w") as fp,
-                open(
-                    args.output.with_stem(args.output.stem + "_single"), mode="w"
-                ) as fp_single,
             ):
                 fp.write(
-                    f"id,framecount,{','.join(f'Shift_{i}[{s:.2f}]' for i, s in enumerate(shifts))}\n"
-                )
-                fp_single.write(
                     f"id,datatype,frame,positionx,positiony,{','.join(f'Shift_{i}[{s:.2f}]' for i, s in enumerate(shifts))}\n"
                 )
                 for particle in exited_particles:
-                    fp.write(
-                        f"{particle.id},{len(particle.spectra)},{','.join(f'{s:.6g}' for s in particle.meanSpectra())}\n"
-                    )
                     for frame in particle.images:
                         pos = particle.position(frame)
                         spectra, spectra_bg = particle.spectra[frame]
-                        fp_single.write(
+                        fp.write(
                             f"{particle.id},S,{frame},{pos[1]:.2f},{pos[0]:.2f},{','.join(f'{s:.6g}' for s in spectra)}\n"
                         )
-                        fp_single.write(
+                        fp.write(
                             f"{particle.id},B,{frame},{pos[1]:.2f},{pos[0]:.2f},{','.join(f'{s:.6g}' for s in spectra_bg)}\n"
                         )
