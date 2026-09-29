@@ -153,7 +153,7 @@ def init_parser(parser: argparse.ArgumentParser):
         "--roi",
         type=int,
         nargs=4,
-        default=[500, -500, -110, -10],
+        default=[500, -500, -160, -10],
         metavar=("x", "width", "y", "height"),
         help="roi for particle extraction",
     )
