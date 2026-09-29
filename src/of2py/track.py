@@ -337,6 +337,8 @@ def main(args: argparse.Namespace):
     exited_particles = sorted(exited_particles, key=lambda p: p.id)
 
     if args.output is not None:
+        args.output.parent.mkdir(exist_ok=True)
+
         if args.output.suffix == ".npz":
             size = np.sum([len(p.images) for p in exited_particles])
             data = np.empty(
