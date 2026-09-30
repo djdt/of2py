@@ -87,6 +87,23 @@ def interpolate_background(
     return out
 
 
+def accumulate_background(
+    image: np.ndarray,
+    positions: list,
+    bg_sum: np.ndarray,
+    bg_count: np.ndarray,
+    width: int = 10,
+):
+    mask = np.ones(image.shape[1], dtype=bool)
+    for _, pos in np.around(positions).astype(int):
+        mask[pos - width // 2 : pos + width // 2] = False
+
+    bg_count[mask] += 1
+    bg_sum[mask] += image[mask]
+    # xp, x = np.flatnonzero(mask), np.flatnonzero(~mask)
+    # out = image.astype(np.float32)
+
+
 def read_spectra_subpixel(
     image: np.ndarray,
     pos: np.ndarray,
@@ -145,7 +162,7 @@ def init_parser(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--background-width",
         type=int,
-        default=21,
+        default=10,
         metavar="PIXELS",
         help="width of background to blank",
     )
@@ -154,8 +171,8 @@ def init_parser(parser: argparse.ArgumentParser):
         type=int,
         nargs=4,
         default=[500, -500, -110, -10],
-        metavar=("x", "width", "y", "height"),
-        help="roi for particle extraction",
+        metavar=("x0", "x1", "y0", "y1"),
+        help="roi for particle extraction, can be negative for offset",
     )
     parser.add_argument(
         "--track-distance",
@@ -240,6 +257,9 @@ def main(args: argparse.Namespace):
         f"{args.video} :: {images.width} x {images.height} :: {images.n_frames} frames :: tracking particles"
     )
 
+    background_sum = np.zeros((images.width, images.height), dtype=float)
+    background_count = np.zeros((images.width, images.height), dtype=int)
+
     while True:
         try:
             images.seek(frame)
@@ -278,6 +298,13 @@ def main(args: argparse.Namespace):
         background = interpolate_background(
             image,
             [particle.position() for particle in tracked_particles],
+            width=args.background_width,
+        )
+        accumulate_background(
+            image,
+            [particle.position() for particle in tracked_particles],
+            background_sum,
+            background_count,
             width=args.background_width,
         )
         # extract spectra
@@ -335,6 +362,24 @@ def main(args: argparse.Namespace):
 
     exited_particles.extend(tracked_particles)
     exited_particles = sorted(exited_particles, key=lambda p: p.id)
+
+    # background = background_sum / background_count
+    #
+    # for particle in exited_particles:
+    #     for frame in particle.spectra:
+    #         images.seek(frame)
+    #         image = np.array(images)
+    #         if offsets is not None:
+    #             image = roll_along_axis(image, offsets, 1)
+    #
+    #         spectra, spectra_bg = read_spectra_subpixel(
+    #             image,
+    #             particle.position(frame),
+    #             background,
+    #             args.spectra_width,
+    #             rayleigh_offset,
+    #         )
+    #         particle.spectra[frame] = (spectra, spectra_bg)
 
     if args.output is not None:
         args.output.parent.mkdir(exist_ok=True)
