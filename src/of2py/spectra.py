@@ -180,6 +180,8 @@ def reduce_raman_single_spectra(x: np.ndarray) -> np.ndarray:
         ("velocity", float),
         ("spectra", float, 2304),
         ("spectra_std", float, 2304),
+        ("background", float, 2304),
+        ("background_std", float, 2304),
     ]
     reduced = np.empty(len(ids), dtype=reduced_dtype)
     for i, (id, count) in enumerate(zip(ids, counts)):
@@ -198,6 +200,11 @@ def reduce_raman_single_spectra(x: np.ndarray) -> np.ndarray:
         reduced[i]["spectra_std"] = np.std(
             x[x["id"] == id]["spectra"], mean=reduced[i]["spectra"], axis=0
         )
+        if "background" in x.dtype.names:
+            reduced[i]["background"] = np.mean(x[x["id"] == id]["background"], axis=0)
+            reduced[i]["background_std"] = np.std(
+                x[x["id"] == id]["background"], mean=reduced[i]["background"], axis=0
+            )
 
     return reduced
 
