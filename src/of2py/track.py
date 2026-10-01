@@ -87,25 +87,21 @@ def interpolate_background(
     return out
 
 
-def read_spectra_subpixel(
-    image: np.ndarray,
-    pos: np.ndarray,
-    background: np.ndarray,
-    width: int = 3,
-    rayleigh_offset: float = 0.0,
-) -> tuple[np.ndarray, np.ndarray]:
+def read_spectra(image: np.ndarray, pos: np.ndarray, width: int = 3) -> np.ndarray:
     px = int(np.around(pos[1]))
     spectra = np.mean(image[:, px - width // 2 : px + width // 2 + 1], axis=1)
-    spectra_bg = np.mean(background[:, px - width // 2 : px + width // 2 + 1], axis=1)
+    return spectra[::-1]
 
+
+def subpixel_align(
+    spectrum: np.ndarray, pos: np.ndarray, rayleigh_offset: float = 0.0
+) -> np.ndarray:
     xs = np.arange(int(pos[0]) - 2, int(pos[0]) + 3)
-    poly = np.polynomial.Polynomial.fit(xs, spectra[xs], 2)
-    subpixel_offset = spectra.size - poly.deriv(1).roots() - 1
+    poly = np.polynomial.Polynomial.fit(xs, spectrum[xs], 2)
+    subpixel_offset = spectrum.size - int(poly.deriv(1).roots()) - 1
 
-    x = np.arange(spectra.size)
-    spectra = np.interp(x, x - rayleigh_offset + subpixel_offset, spectra)
-    spectra_bg = np.interp(x, x - rayleigh_offset + subpixel_offset, spectra_bg)
-    return spectra[::-1] - spectra_bg[::-1], spectra_bg[::-1]
+    x = np.arange(spectrum.size)
+    return np.interp(x, x - rayleigh_offset + subpixel_offset, spectrum)
 
 
 def roll_along_axis(x: np.ndarray, shifts: np.ndarray, axis: int = 0) -> np.ndarray:
@@ -145,9 +141,14 @@ def init_parser(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--background-width",
         type=int,
-        default=7,
+        default=9,
         metavar="PIXELS",
         help="width of background to blank",
+    )
+    parser.add_argument(
+        "--no-align",
+        action="store_true",
+        help="don't perform subpixel alignment to rayleigh peak, shifts will be incorrect",
     )
     parser.add_argument(
         "--roi",
@@ -285,13 +286,15 @@ def main(args: argparse.Namespace):
             if particle.lastFrame() != frame:  # no particle = no spectra
                 continue
 
-            spectra, spectra_bg = read_spectra_subpixel(
-                image,
-                particle.position(),
-                background,
-                args.spectra_width,
-                rayleigh_offset,
+            spectra = read_spectra(image, particle.position(), args.spectra_width)
+            spectra_bg = read_spectra(
+                background, particle.position(), args.spectra_width
             )
+            if not args.no_align:
+                spectra = subpixel_align(spectra, particle.position(), rayleigh_offset)
+                spectra_bg = subpixel_align(
+                    spectra_bg, particle.position(), rayleigh_offset
+                )
             particle.spectra[frame] = (spectra, spectra_bg)
 
         if args.show or args.record is not None:
