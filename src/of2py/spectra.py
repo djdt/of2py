@@ -40,11 +40,11 @@ def read_of2py_csv(
     x = data[data["type"] == "S"]
     y = data[data["type"] == "B"]
     if mode == "subtracted":
+        x["spectra"] -= y["spectra"]
         data = x
     elif mode == "background":
         data = y
     elif mode == "raw":
-        x["spectra"] += y["spectra"]
         data = x
     else:
         raise ValueError("mode must be one of 'subtracted', 'background', 'raw'")
@@ -58,11 +58,11 @@ def read_of2py_npz(
     data = npz["particles"]
 
     if mode == "subtracted":
-        pass
+        data["spectra"] -= data["background"]
     elif mode == "background":
         data["spectra"] = data["background"]
     elif mode == "raw":
-        data["spectra"] += data["background"]
+        pass
     else:
         raise ValueError("mode must be one of 'subtracted', 'background', 'raw'")
 
