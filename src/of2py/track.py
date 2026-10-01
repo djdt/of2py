@@ -145,7 +145,7 @@ def init_parser(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--background-width",
         type=int,
-        default=21,
+        default=7,
         metavar="PIXELS",
         help="width of background to blank",
     )
