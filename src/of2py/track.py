@@ -72,12 +72,12 @@ def detect_particles(
 
 
 def interpolate_background(
-    image: np.ndarray, positions: list, width: int = 10
+    image: np.ndarray, positions: list, width: int = 11
 ) -> np.ndarray:
 
     mask = np.ones(image.shape[1], dtype=bool)
     for _, pos in np.around(positions).astype(int):
-        mask[pos - width // 2 : pos + width // 2] = False
+        mask[pos - width // 2 : pos + width // 2 + 1] = False
 
     xp, x = np.flatnonzero(mask), np.flatnonzero(~mask)
     out = image.astype(np.float32)
@@ -200,6 +200,11 @@ def main(args: argparse.Namespace):
     images = PIL.Image.open(args.video)
     assert hasattr(images, "n_frames")  # multi page tiff
     frame = 0
+
+    if args.spectra_width % 2 != 1:
+        raise argparse.ArgumentTypeError("--spectra-width must be an odd integer")
+    if args.background_width % 2 != 1:
+        raise argparse.ArgumentTypeError("--background-width must be an odd integer")
 
     if args.show:
         import cv2
