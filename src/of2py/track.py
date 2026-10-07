@@ -98,7 +98,7 @@ def subpixel_align(
 ) -> np.ndarray:
     xs = np.arange(int(pos[0]) - 2, int(pos[0]) + 3)
     poly = np.polynomial.Polynomial.fit(xs, spectrum[xs], 2)
-    subpixel_offset = spectrum.size - int(poly.deriv(1).roots()) - 1
+    subpixel_offset = spectrum.size - poly.deriv(1).roots() - 1  # type: ignore
 
     x = np.arange(spectrum.size)
     return np.interp(x, x - rayleigh_offset + subpixel_offset, spectrum)
@@ -365,7 +365,14 @@ def main(args: argparse.Namespace):
                 for frame in particle.images:
                     pos = particle.position(frame)
                     spectra, spectra_bg = particle.spectra[frame]
-                    data[i] = (particle.id, frame, pos[1], pos[0], spectra, spectra_bg)
+                    data[i] = (
+                        particle.id,
+                        frame,
+                        pos[1],
+                        pos[0],
+                        spectra - spectra_bg,
+                        spectra_bg,
+                    )
                     i += 1
             np.savez_compressed(args.output, particles=data, shifts=shifts)
         else:
@@ -380,7 +387,7 @@ def main(args: argparse.Namespace):
                         pos = particle.position(frame)
                         spectra, spectra_bg = particle.spectra[frame]
                         fp.write(
-                            f"{particle.id},S,{frame},{pos[1]:.2f},{pos[0]:.2f},{','.join(f'{s:.6g}' for s in spectra)}\n"
+                            f"{particle.id},S,{frame},{pos[1]:.2f},{pos[0]:.2f},{','.join(f'{s:.6g}' for s in spectra - spectra_bg)}\n"
                         )
                         fp.write(
                             f"{particle.id},B,{frame},{pos[1]:.2f},{pos[0]:.2f},{','.join(f'{s:.6g}' for s in spectra_bg)}\n"
