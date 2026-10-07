@@ -93,15 +93,20 @@ def read_spectra(image: np.ndarray, pos: np.ndarray, width: int = 3) -> np.ndarr
     return spectra[::-1]
 
 
-def subpixel_align(
-    spectrum: np.ndarray, pos: np.ndarray, rayleigh_offset: float = 0.0
-) -> np.ndarray:
+def subpixel_offset(spectrum: np.ndarray, pos: np.ndarray) -> float:
     xs = np.arange(int(pos[0]) - 2, int(pos[0]) + 3)
     poly = np.polynomial.Polynomial.fit(xs, spectrum[xs], 2)
-    subpixel_offset = spectrum.size - poly.deriv(1).roots() - 1  # type: ignore
+    return spectrum.size - poly.deriv(1).roots()[0] - 1
 
-    x = np.arange(spectrum.size)
-    return np.interp(x, x - rayleigh_offset + subpixel_offset, spectrum)
+
+def subpixel_align(
+    shifts: np.ndarray,
+    spectrum: np.ndarray,
+    subpixel_offset: float,
+) -> np.ndarray:
+
+    offset_cm = np.interp(subpixel_offset, np.arange(shifts.size), shifts)
+    return np.interp(shifts, shifts - offset_cm, spectrum)
 
 
 def roll_along_axis(x: np.ndarray, shifts: np.ndarray, axis: int = 0) -> np.ndarray:
@@ -147,7 +152,7 @@ def init_parser(parser: argparse.ArgumentParser):
     )
     parser.add_argument(
         "--no-align",
-        action="store_true",
+        action="store_false",
         help="don't perform subpixel alignment to rayleigh peak, shifts will be incorrect",
     )
     parser.add_argument(
@@ -233,8 +238,6 @@ def main(args: argparse.Namespace):
     else:
         shifts = np.arange(images.height)
 
-    rayleigh_offset = np.interp(0.0, shifts, np.arange(shifts.size))
-
     exited_particles = []
     tracked_particles = []
 
@@ -295,11 +298,11 @@ def main(args: argparse.Namespace):
             spectra_bg = read_spectra(
                 background, particle.position(), args.spectra_width
             )
-            if not args.no_align:
-                spectra = subpixel_align(spectra, particle.position(), rayleigh_offset)
-                spectra_bg = subpixel_align(
-                    spectra_bg, particle.position(), rayleigh_offset
-                )
+            if args.no_align:
+                offset = subpixel_offset(spectra, particle.position())
+                spectra = subpixel_align(shifts, spectra, offset)
+                spectra_bg = subpixel_align(shifts, spectra_bg, offset)
+
             particle.spectra[frame] = (spectra, spectra_bg)
 
         if args.show or args.record is not None:

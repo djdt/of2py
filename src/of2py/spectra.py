@@ -4,6 +4,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.lib.recfunctions as rfn
 from scipy.interpolate import CubicSpline
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import savgol_filter
@@ -11,9 +12,7 @@ from scipy.signal import savgol_filter
 logger = logging.getLogger(__name__)
 
 
-def read_of2py_csv(
-    file: str | Path, mode: str = "subtracted"
-) -> tuple[np.ndarray, np.ndarray]:
+def read_of2py_csv(file: str | Path) -> tuple[np.ndarray, np.ndarray]:
     with open(file, "r") as fp:
         while header := fp.readline():
             if not header.startswith("#"):
@@ -37,36 +36,16 @@ def read_of2py_csv(
             ],
         )
 
-    x = data[data["type"] == "S"]
-    y = data[data["type"] == "B"]
-    if mode == "subtracted":
-        x["spectra"] -= y["spectra"]
-        data = x
-    elif mode == "background":
-        data = y
-    elif mode == "raw":
-        data = x
-    else:
-        raise ValueError("mode must be one of 'subtracted', 'background', 'raw'")
+    backgrounds = data[data["type"] == "B"]["spectra"]
+    data = data[data["type"] == "S"]  # subtracted
+    data = rfn.append_fields(data, "background", backgrounds)
+    data = rfn.drop_fields(data, "type")
     return shifts, data
 
 
-def read_of2py_npz(
-    file: str | Path, mode: str = "subtracted"
-) -> tuple[np.ndarray, np.ndarray]:
+def read_of2py_npz(file: str | Path) -> tuple[np.ndarray, np.ndarray]:
     npz = np.load(file)
-    data = npz["particles"]
-
-    if mode == "subtracted":
-        data["spectra"] -= data["background"]
-    elif mode == "background":
-        data["spectra"] = data["background"]
-    elif mode == "raw":
-        pass
-    else:
-        raise ValueError("mode must be one of 'subtracted', 'background', 'raw'")
-
-    return npz["shifts"], data
+    return npz["shifts"], npz["particles"]
 
 
 def read_raman_spectra(path: Path) -> tuple[np.ndarray, np.ndarray]:
@@ -105,19 +84,14 @@ def read_raman_spectra(path: Path) -> tuple[np.ndarray, np.ndarray]:
         )
 
 
-def read_raman_single_spectra(
-    path: Path,
-    mode: str = "subtracted",
-) -> tuple[np.ndarray, np.ndarray]:
+def read_raman_single_spectra(path: Path) -> tuple[np.ndarray, np.ndarray]:
     """Read a Raman single spectra file.
 
-    Data can be returned with or without background subtraction depending on `mode`.
     Passing 'raw' returns un-corrected spectra, 'subtracted' returns background subtracted spectra
     and 'background' return the background spectra for each particle.
 
     Args:
         path: path to csv file
-        mode: one of 'raw', 'subtracted', 'background'
 
     Returns:
         array of shifts (/cm), structured array of single spectra
@@ -142,25 +116,16 @@ def read_raman_single_spectra(
 
         data = np.loadtxt(fp, delimiter=";", dtype=dtype)
 
-    y = data[data["type"] == "B"]  # backgrounds
-    x = data[data["type"] == "S"]  # subtracted
+    backgrounds = data[data["type"] == "B"]["spectra"]
+    data = data[data["type"] == "S"]  # subtracted
+    data = rfn.append_fields(data, "background", backgrounds)
+    data = rfn.drop_fields(data, "type")
 
-    if mode == "raw":
-        spectra = x["spectra"] + y["spectra"]
-    elif mode == "subtracted":
-        spectra = x["spectra"]
-    elif mode == "background":
-        spectra = y["spectra"]
-    else:
-        raise ValueError("mode must be one of 'subtracted', 'background', 'raw'")
+    for id in np.unique(data["id"]):
+        data[data["id"] == id]["cluster"] = data[data["id"] == id][-1]["cluster"]
+        data[data["id"] == id]["confidence"] = data[data["id"] == id][-1]["confidence"]
 
-    x["spectra"] = spectra
-
-    for id in np.unique(x["id"]):
-        x[x["id"] == id]["cluster"] = x[x["id"] == id][-1]["cluster"]
-        x[x["id"] == id]["confidence"] = x[x["id"] == id][-1]["confidence"]
-
-    return shifts, x
+    return shifts, data
 
 
 def reduce_raman_single_spectra(x: np.ndarray) -> np.ndarray:
@@ -337,7 +302,7 @@ def main(args: argparse.Namespace):
         assert isinstance(file, Path)
         if file.suffix == ".npz":
             file_type = "of2py"
-            shifts, data = read_of2py_npz(file, mode=args.mode)
+            shifts, data = read_of2py_npz(file)
         elif file.suffix.lower() == ".csv":
             header = file.open("r").readline()
             if "singleSpectraCount" in header:  # is raman_spectra format
@@ -345,10 +310,10 @@ def main(args: argparse.Namespace):
                 shifts, data = read_raman_spectra(file)
             elif "materialId" in header:  # still BRAVE format
                 file_type = "brave_single"
-                shifts, data = read_raman_single_spectra(file, mode=args.mode)
+                shifts, data = read_raman_single_spectra(file)
             else:  # assume of2py
                 file_type = "of2py"
-                shifts, data = read_of2py_csv(file, mode=args.mode)
+                shifts, data = read_of2py_csv(file)
 
         if args.id is not None:
             data = data[data["id"] == args.id]
@@ -386,7 +351,14 @@ def main(args: argparse.Namespace):
             logger.warning(f"all spectra filtered for {file}")
             continue
 
-        spectra = data["spectra"]
+        if args.mode == "subtracted":
+            spectra = data["spectra"]
+        elif args.mode == "background":
+            spectra = data["background"]
+        elif args.mode == "raw":
+            spectra = data["spectra"] + data["background"]
+        else:
+            raise ValueError("mode must be one of 'subtracted', 'background', 'raw'")
 
         if args.savgol:
             spectra = savgol_filter(spectra, int(args.savgol * 3) + 1, 3, axis=1)
