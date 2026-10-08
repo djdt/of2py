@@ -94,9 +94,11 @@ def read_spectra(image: np.ndarray, pos: np.ndarray, width: int = 3) -> np.ndarr
 
 
 def subpixel_offset(spectrum: np.ndarray, pos: np.ndarray) -> float:
-    xs = np.arange(int(pos[0]) - 2, int(pos[0]) + 3)
+    offset = spectrum.size - pos[0]
+    xs = np.arange(offset - 5, offset + 6)
+
     poly = np.polynomial.Polynomial.fit(xs, spectrum[xs], 2)
-    return spectrum.size - poly.deriv(1).roots()[0] - 1
+    return poly.deriv(1).roots()[0] - 1
 
 
 def subpixel_align(
