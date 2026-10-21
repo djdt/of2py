@@ -1,5 +1,6 @@
 import argparse
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -7,7 +8,9 @@ import numpy as np
 import numpy.lib.recfunctions as rfn
 from scipy.interpolate import CubicSpline
 from scipy.ndimage import gaussian_filter1d
+from scipy.optimize import curve_fit
 from scipy.signal import savgol_filter
+from scipy.special import voigt_profile
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +175,86 @@ def reduce_raman_single_spectra(x: np.ndarray) -> np.ndarray:
             )
 
     return reduced
+
+
+def fit_spectrum_regions(
+    shifts: np.ndarray,
+    spectrum: np.ndarray,
+    regions: Sequence[tuple[float, float]],
+    degree: int = 2,
+) -> np.polynomial.Polynomial:
+    """Fit a polynomial of `degree` to the given regions.
+
+    Args:
+        shifts: shifts in inverse cm
+        spectrum: Raman emission
+        regions: start and end points of regions to fit, inverse cm
+        degree: degree of polynomial fit
+
+    Returns:
+        polynomial that fits `regions`
+    """
+
+    idx = np.searchsorted(shifts, regions)
+    all_shifts = np.concatenate([shifts[x0:x1] for x0, x1 in idx])
+    all_spectra = np.concatenate([spectrum[x0:x1] for x0, x1 in idx])
+
+    poly = np.polynomial.Polynomial.fit(all_shifts, all_spectra, degree)
+    return poly
+
+
+def voigt_peak_area(
+    shifts: np.ndarray,
+    spectrum: np.ndarray,
+    peak_range: tuple[float, float],
+    bg_ranges: Sequence[tuple[float, float]],
+    degree: int = 1,
+    negative: bool = False,
+) -> tuple[float, float]:
+    """Fits a Voigt profile to the peak in `peak_range` and returns its area.
+
+    The `peak_range` should fully contain the largest expected peak.
+    Background subtraction can be performed by passing ranges to `bg_ranges`.
+
+    Args:
+        shifts: shifts in inverse cm
+        spectrum: Raman emission spectrum
+        peak_range: start and end point to fit, inverse cm
+        bg_ranges: ranges used to perform background subtraction, inverse cm
+        degree: degree of background polynomial fit
+        negative: the peak is expected to be negative
+
+    Returns:
+        peak area, error in peak area
+    """
+
+    def voigt_peak(x: np.ndarray, x0: float, sigma: float, gamma: float, scale: float):
+        prof = voigt_profile(x - x0, sigma, gamma)
+        return scale * prof
+
+    poly = fit_spectrum_regions(shifts, spectrum, bg_ranges, degree)
+    x0, x1 = np.searchsorted(shifts, peak_range)
+    x, y = shifts[x0:x1], spectrum[x0:x1]
+    y -= poly(x)
+
+    if negative:
+        idx = np.argmin(y)
+        scale_range = (-1e9, 0.0)
+    else:
+        idx = np.argmax(y)
+        scale_range = (0.0, 1e9)
+
+    popt, pcov = curve_fit(
+        voigt_peak,
+        x,
+        y,
+        (x[idx], 10.0, 10.0, y[idx]),
+        bounds=(
+            (peak_range[0], 0.0, 0.0, scale_range[0]),
+            (peak_range[1], 1e9, 1e9, scale_range[1]),
+        ),
+    )
+    return popt[3], np.sqrt(np.diag(pcov))[3]
 
 
 def label_peaks(ax, xs: np.ndarray, ys: np.ndarray, peaks: np.ndarray):
