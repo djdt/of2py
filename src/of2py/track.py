@@ -361,6 +361,8 @@ def main(args: argparse.Namespace):
                     ("frame", int),
                     ("xpos", float),
                     ("ypos", float),
+                    ("size", int),
+                    ("intensity", float),
                     ("spectra", float, 2304),
                     ("background", float, 2304),
                 ],
@@ -375,6 +377,8 @@ def main(args: argparse.Namespace):
                         frame,
                         pos[1],
                         pos[0],
+                        particle.size(frame),
+                        particle.intensity(frame),
                         spectra - spectra_bg,
                         spectra_bg,
                     )
