@@ -121,8 +121,9 @@ def read_raman_single_spectra(path: Path) -> tuple[np.ndarray, np.ndarray]:
         data = np.loadtxt(fp, delimiter=";", dtype=dtype)
 
     backgrounds = data[data["type"] == "B"]["spectra"]
+    backgrounds = backgrounds.view(np.dtype([("background", float, 2304)])).reshape(-1)
     data = data[data["type"] == "S"]  # subtracted
-    data = rfn.append_fields(data, "background", backgrounds)
+    data = rfn.merge_arrays([data, backgrounds], flatten=True)
     data = rfn.drop_fields(data, "type")
 
     for id in np.unique(data["id"]):
