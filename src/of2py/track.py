@@ -87,14 +87,16 @@ def interpolate_background(
     return out
 
 
-def read_spectra(image: np.ndarray, pos: np.ndarray, width: int = 3) -> np.ndarray:
+def read_spectra(
+    image: np.ndarray, pos: tuple[float, float], width: int = 3
+) -> np.ndarray:
     px = int(np.around(pos[1]))
     spectra = np.mean(image[:, px - width // 2 : px + width // 2 + 1], axis=1)
     return spectra[::-1]
 
 
-def subpixel_offset(spectrum: np.ndarray, pos: np.ndarray) -> float:
-    offset = spectrum.size - pos[0]
+def subpixel_offset(spectrum: np.ndarray, pos: tuple[float, float]) -> float:
+    offset = spectrum.size - int(pos[0])
     xs = np.arange(offset - 5, offset + 6)
 
     poly = np.polynomial.Polynomial.fit(xs, spectrum[xs], 2)
@@ -131,6 +133,12 @@ def init_parser(parser: argparse.ArgumentParser):
     )
     parser.add_argument(
         "-o", "--output", type=Path, help="save tracked particles to csv"
+    )
+    parser.add_argument(
+        "-i",
+        "--images-output",
+        type=Path,
+        help="save image of each particle average to a PNG",
     )
     parser.add_argument(
         "--threshold",
@@ -240,8 +248,8 @@ def main(args: argparse.Namespace):
     else:
         shifts = np.arange(images.height)
 
-    exited_particles = []
-    tracked_particles = []
+    exited_particles: list[Particle] = []
+    tracked_particles: list[Particle] = []
 
     for i in range(4):
         if args.roi[i] < 0:
@@ -348,6 +356,29 @@ def main(args: argparse.Namespace):
 
     exited_particles.extend(tracked_particles)
     exited_particles = sorted(exited_particles, key=lambda p: p.id)
+
+    if args.images_output is not None:
+        args.images_output.mkdir(exist_ok=True)
+        for particle in exited_particles:
+            ex, ey = 0, 0
+            sx, sy = 0, 0
+            for image, _ in particle.images.values():
+                pos = ndi.maximum_position(image)
+                sx = min(sx, pos[0] - image.shape[0] // 2)
+                sy = min(sy, pos[1] - image.shape[1] // 2)
+                ex = max(ex, pos[0] - image.shape[0] // 2 + image.shape[0])
+                ey = max(ey, pos[1] - image.shape[1] // 2 + image.shape[1])
+
+            sum = np.zeros((ex - sx, ey - sy), dtype=np.float32)
+            for image, _ in particle.images.values():
+                pos = ndi.maximum_position(image)
+                ix = pos[0] - image.shape[0] // 2 - sx
+                iy = pos[1] - image.shape[1] // 2 - sy
+                sum[ix : ix + image.shape[0], iy : iy + image.shape[1]] += image
+
+            PIL.Image.fromarray(sum / np.percentile(sum, 90) * 255).convert("L").save(
+                args.images_output.joinpath(f"{args.video.stem}_{particle.id}.png")
+            )
 
     if args.output is not None:
         args.output.parent.mkdir(exist_ok=True)
