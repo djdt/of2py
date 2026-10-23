@@ -3,6 +3,7 @@ import logging
 from collections.abc import Sequence
 from pathlib import Path
 
+import cycler
 import matplotlib.pyplot as plt
 import numpy as np
 import numpy.lib.recfunctions as rfn
@@ -210,7 +211,7 @@ def voigt_peak_area(
     bg_ranges: Sequence[tuple[float, float]],
     degree: int = 1,
     negative: bool = False,
-) -> tuple[float, float]:
+) -> tuple[float, float, float]:
     """Fits a Voigt profile to the peak in `peak_range` and returns its area.
 
     The `peak_range` should fully contain the largest expected peak.
@@ -225,7 +226,7 @@ def voigt_peak_area(
         negative: the peak is expected to be negative
 
     Returns:
-        peak area, error in peak area
+        peak location (inverse cm), peak area, error in peak area
     """
 
     def voigt_peak(x: np.ndarray, x0: float, sigma: float, gamma: float, scale: float):
@@ -254,7 +255,7 @@ def voigt_peak_area(
             (peak_range[1], 1e9, 1e9, scale_range[1]),
         ),
     )
-    return popt[3], np.sqrt(np.diag(pcov))[3]
+    return popt[0], popt[3], np.sqrt(np.diag(pcov))[3]
 
 
 def label_peaks(ax, xs: np.ndarray, ys: np.ndarray, peaks: np.ndarray):
@@ -380,6 +381,12 @@ def init_parser(parser: argparse.ArgumentParser):
 
 
 def main(args: argparse.Namespace):
+    color_and_lines = (
+        cycler.cycler(linestyle=["-", "--", ":", "-."])
+        * plt.rcParams["axes.prop_cycle"]
+    )
+    plt.rcParams["axes.prop_cycle"] = color_and_lines
+
     min_raman, max_raman = 0.0, 0.0
     for file in args.files:
         assert isinstance(file, Path)
