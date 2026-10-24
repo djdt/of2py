@@ -209,8 +209,9 @@ def voigt_peak_area(
     shifts: np.ndarray,
     spectrum: np.ndarray,
     peak_range: tuple[float, float],
-    bg_ranges: Sequence[tuple[float, float]],
-    degree: int = 1,
+    background_ranges: Sequence[tuple[float, float]],
+    background_degree: int = 3,
+    peak_width: tuple[float, float] = (20.0, 200.0),
     negative: bool = False,
 ) -> tuple[float, float, float]:
     """Fits a Voigt profile to the peak in `peak_range` and returns its area.
@@ -222,19 +223,27 @@ def voigt_peak_area(
         shifts: shifts in inverse cm
         spectrum: Raman emission spectrum
         peak_range: start and end point to fit, inverse cm
-        bg_ranges: ranges used to perform background subtraction, inverse cm
-        degree: degree of background polynomial fit
+        background_ranges: ranges used to perform background subtraction, inverse cm
+        background_degree: degree of polynomial fit
         negative: the peak is expected to be negative
 
     Returns:
         peak location (inverse cm), peak area, error in peak area
     """
 
-    def voigt_peak(x: np.ndarray, x0: float, sigma: float, gamma: float, scale: float):
-        prof = voigt_profile(x - x0, sigma, gamma)
-        return scale * prof
+    def voigt_width_model(
+        x: np.ndarray, x0: float, scale: float, fwhm: float, eta: float
+    ) -> np.ndarray:
+        fwhm_l = fwhm * eta
+        fwhm_g = np.sqrt(max((fwhm - 0.5346 * fwhm_l) ** 2 - 0.2166 * fwhm_l**2, 0.0))
 
-    poly = fit_spectrum_regions(shifts, spectrum, bg_ranges, degree)
+        sigma = fwhm_g / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+        gamma = fwhm_l / 2.0
+        # prof = voigt_profile(x - x0, sigma, gamma)
+        raw = voigt_profile(0.0, sigma, gamma)
+        return scale * voigt_profile(x - x0, sigma, gamma) / raw
+
+    poly = fit_spectrum_regions(shifts, spectrum, background_ranges, background_degree)
     x0, x1 = np.searchsorted(shifts, peak_range)
     x, y = shifts[x0:x1], spectrum[x0:x1]
     y -= poly(x)
@@ -247,16 +256,16 @@ def voigt_peak_area(
         scale_range = (0.0, 1e9)
 
     popt, pcov = curve_fit(
-        voigt_peak,
+        voigt_width_model,
         x,
         y,
-        (x[idx], 10.0, 10.0, y[idx]),
+        (x[idx], y[idx], 50.0, 0.5),
         bounds=(
-            (peak_range[0], 0.0, 0.0, scale_range[0]),
-            (peak_range[1], 1e9, 1e9, scale_range[1]),
+            (peak_range[0], scale_range[0], peak_width[0], 0.01),
+            (peak_range[1], scale_range[1], peak_width[1], 0.99),
         ),
     )
-    return popt[0], popt[3], np.sqrt(np.diag(pcov))[3]
+    return popt[0], popt[1], np.sqrt(np.diag(pcov))[1]
 
 
 def label_peaks(ax, xs: np.ndarray, ys: np.ndarray, peaks: np.ndarray):
