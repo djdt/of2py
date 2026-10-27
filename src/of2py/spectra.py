@@ -205,7 +205,7 @@ def fit_spectrum_regions(
     return poly
 
 
-def voigt_peak_area(
+def voigt_peak(
     shifts: np.ndarray,
     spectrum: np.ndarray,
     peak_range: tuple[float, float],
@@ -213,7 +213,7 @@ def voigt_peak_area(
     background_degree: int = 3,
     peak_width: tuple[float, float] = (20.0, 200.0),
     negative: bool = False,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, float, np.ndarray]:
     """Fits a Voigt profile to the peak in `peak_range` and returns its area.
 
     The `peak_range` should fully contain the largest expected peak.
@@ -228,20 +228,24 @@ def voigt_peak_area(
         negative: the peak is expected to be negative
 
     Returns:
-        peak location (inverse cm), peak area, error in peak area
+        peak location (inverse cm), peak height, peak width, peak area,
+        array of errors in loc, height, width
     """
 
-    def voigt_width_model(
-        x: np.ndarray, x0: float, scale: float, fwhm: float, eta: float
-    ) -> np.ndarray:
+    def voigt_parameters_from_fwhm(fwhm: float, eta: float) -> tuple[float, float]:
         fwhm_l = fwhm * eta
         fwhm_g = np.sqrt(max((fwhm - 0.5346 * fwhm_l) ** 2 - 0.2166 * fwhm_l**2, 0.0))
 
         sigma = fwhm_g / (2.0 * np.sqrt(2.0 * np.log(2.0)))
         gamma = fwhm_l / 2.0
-        # prof = voigt_profile(x - x0, sigma, gamma)
+        return sigma, gamma
+
+    def voigt_width_model(
+        x: np.ndarray, x0: float, height: float, fwhm: float, eta: float
+    ) -> np.ndarray:
+        sigma, gamma = voigt_parameters_from_fwhm(fwhm, eta)
         raw = voigt_profile(0.0, sigma, gamma)
-        return scale * voigt_profile(x - x0, sigma, gamma) / raw
+        return height * voigt_profile(x - x0, sigma, gamma) / raw
 
     poly = fit_spectrum_regions(shifts, spectrum, background_ranges, background_degree)
     x0, x1 = np.searchsorted(shifts, peak_range)
@@ -265,7 +269,16 @@ def voigt_peak_area(
             (peak_range[1], scale_range[1], peak_width[1], 0.99),
         ),
     )
-    return popt[0], popt[1], np.sqrt(np.diag(pcov))[1]
+
+    sigma, gamma = voigt_parameters_from_fwhm(popt[2], popt[3])
+
+    return (
+        popt[0],
+        popt[1],
+        popt[2],
+        popt[1] / voigt_profile(0.0, sigma, gamma),
+        np.sqrt(np.diag(pcov))[:2],
+    )
 
 
 def label_peaks(ax, xs: np.ndarray, ys: np.ndarray, peaks: np.ndarray):
