@@ -246,7 +246,7 @@ def voigt_peak_area(
     poly = fit_spectrum_regions(shifts, spectrum, background_ranges, background_degree)
     x0, x1 = np.searchsorted(shifts, peak_range)
     x, y = shifts[x0:x1], spectrum[x0:x1]
-    y -= poly(x)
+    y = y - poly(x)
 
     if negative:
         idx = np.argmin(y)
@@ -480,6 +480,7 @@ def main(args: argparse.Namespace):
             spectra = mean
 
         spectra = np.atleast_2d(spectra)
+        print(spectra.shape)
         if args.stack:
             _, axes = plt.subplots(
                 spectra.shape[0], 1, squeeze=False, sharex=True, sharey=True
