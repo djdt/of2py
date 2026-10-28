@@ -254,16 +254,18 @@ def voigt_peak(
 
     if negative:
         idx = np.argmin(y)
+        scale = min(y[idx], -1e-3)
         scale_range = (-1e9, 0.0)
     else:
         idx = np.argmax(y)
+        scale = max(y[idx], 1e-3)
         scale_range = (0.0, 1e9)
 
     popt, pcov = curve_fit(
         voigt_width_model,
         x,
         y,
-        (x[idx], y[idx], 50.0, 0.5),
+        (x[idx], scale, (peak_width[1] + peak_width[0]) / 2.0, 0.5),
         bounds=(
             (peak_range[0], scale_range[0], peak_width[0], 0.01),
             (peak_range[1], scale_range[1], peak_width[1], 0.99),
