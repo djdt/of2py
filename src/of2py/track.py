@@ -106,11 +106,14 @@ def subpixel_offset(spectrum: np.ndarray, pos: tuple[float, float]) -> float:
 def subpixel_align(
     shifts: np.ndarray,
     spectrum: np.ndarray,
+    rayleigh_shift_offset: float,
     subpixel_offset: float,
 ) -> np.ndarray:
-
-    offset_cm = np.interp(subpixel_offset, np.arange(shifts.size), shifts)
-    return np.interp(shifts, shifts - offset_cm, spectrum)
+    pixels = np.arange(shifts.size)
+    aligned_shifts = np.interp(
+        pixels, pixels - subpixel_offset + rayleigh_shift_offset, shifts
+    )
+    return np.interp(aligned_shifts, shifts, spectrum)
 
 
 def roll_along_axis(x: np.ndarray, shifts: np.ndarray, axis: int = 0) -> np.ndarray:
@@ -248,6 +251,8 @@ def main(args: argparse.Namespace):
     else:
         shifts = np.arange(images.height)
 
+    rayleigh_shift_offset = np.interp(0.0, shifts, np.arange(shifts.size))
+
     exited_particles: list[Particle] = []
     tracked_particles: list[Particle] = []
 
@@ -310,8 +315,10 @@ def main(args: argparse.Namespace):
             )
             if args.no_align:
                 offset = subpixel_offset(spectra, particle.position())
-                spectra = subpixel_align(shifts, spectra, offset)
-                spectra_bg = subpixel_align(shifts, spectra_bg, offset)
+                spectra = subpixel_align(shifts, spectra, rayleigh_shift_offset, offset)
+                spectra_bg = subpixel_align(
+                    shifts, spectra_bg, rayleigh_shift_offset, offset
+                )
 
             particle.spectra[frame] = (spectra, spectra_bg)
 
