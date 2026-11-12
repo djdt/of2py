@@ -209,7 +209,7 @@ def voigt_peak(
     shifts: np.ndarray,
     spectrum: np.ndarray,
     peak_range: tuple[float, float],
-    background_ranges: Sequence[tuple[float, float]],
+    background_ranges: Sequence[tuple[float, float]] | None = None,
     background_degree: int = 3,
     peak_width: tuple[float, float] = (20.0, 200.0),
     negative: bool = False,
@@ -247,10 +247,13 @@ def voigt_peak(
         raw = voigt_profile(0.0, sigma, gamma)
         return height * voigt_profile(x - x0, sigma, gamma) / raw
 
-    poly = fit_spectrum_regions(shifts, spectrum, background_ranges, background_degree)
     x0, x1 = np.searchsorted(shifts, peak_range)
     x, y = shifts[x0:x1], spectrum[x0:x1]
-    y = y - poly(x)
+    if background_ranges is not None:
+        poly = fit_spectrum_regions(
+            shifts, spectrum, background_ranges, background_degree
+        )
+        y = y - poly(x)
 
     if negative:
         idx = np.argmin(y)
@@ -495,7 +498,6 @@ def main(args: argparse.Namespace):
             spectra = mean
 
         spectra = np.atleast_2d(spectra)
-        print(spectra.shape)
         if args.stack:
             _, axes = plt.subplots(
                 spectra.shape[0], 1, squeeze=False, sharex=True, sharey=True
