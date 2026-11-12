@@ -355,6 +355,11 @@ def init_parser(parser: argparse.ArgumentParser):
         type=int,
         help="minimum number of frames",
     )
+    parser.add_argument(
+        "--max-frame-only",
+        action="store_true",
+        help="only show the particle with the maximum number of frames",
+    )
     parser.add_argument("--id", type=int, help="only show particles with this ID")
     parser.add_argument(
         "--pos",
@@ -462,7 +467,9 @@ def main(args: argparse.Namespace):
             data = reduce_raman_single_spectra(data)
 
         # must be accessed after reduction
-        if args.frames is not None:
+        if args.max_frame_only:
+            data = np.atleast_1d(data[np.argmax(data["frames"])])
+        elif args.frames is not None:
             data = data[data["frames"] >= args.frames]
 
         if data.size == 0:
