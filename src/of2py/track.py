@@ -355,7 +355,10 @@ def main(args: argparse.Namespace):
                     frame -= 1
                     continue
         frame += 1
-        print(f"\tframe {frame} :: {len(tracked_particles)} active particles", end="\r")
+        print(
+            f"\tframe {frame:>3} :: {len(tracked_particles):>3} active particles",
+            end="\r",
+        )
 
     # end while
     if args.show:
