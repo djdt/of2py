@@ -35,7 +35,7 @@ class Particle:
     def position(self, frame: int | None = None) -> tuple[float, float]:
         if frame is None:
             frame = self.lastFrame()
-        return np.asanyarray(self.images[frame][1]) + ndi.maximum_position(
+        return np.asanyarray(self.images[frame][1]) + ndi.center_of_mass(
             self.images[frame][0]
         )
 
@@ -152,7 +152,7 @@ def init_parser(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--spectra-width",
         type=int,
-        default=3,
+        default=5,
         metavar="PIXELS",
         help="width of spectra to extract",
     )
